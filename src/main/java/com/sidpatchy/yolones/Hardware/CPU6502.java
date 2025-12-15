@@ -1,6 +1,17 @@
 package com.sidpatchy.yolones.Hardware;
 
 public class CPU6502 {
+    // Status flag constants
+    private static final int FLAG_CARRY     = 0b00000001;
+    private static final int FLAG_ZERO      = 0b00000010;
+    private static final int FLAG_INTERRUPT = 0b00000100;
+    private static final int FLAG_DECIMAL   = 0b00001000;
+    private static final int FLAG_BREAK     = 0b00010000;
+    private static final int FLAG_UNUSED    = 0b00100000;
+    private static final int FLAG_OVERFLOW  = 0b01000000;
+    private static final int FLAG_NEGATIVE  = 0b10000000;
+
+    // Registers
     private boolean running = true;
     private int A, X, Y;   // Registers (8-bit)
     private int PC;        // Program Counter (16-bit)
@@ -9,9 +20,37 @@ public class CPU6502 {
 
     private Memory memory;
 
+    public CPU6502(Memory mem) {
+        memory = mem;
+    }
+
     public void step() {
         int opcode = memory.read(PC++);
         executeInstruction(opcode);
+    }
+
+    public void reset() {
+        // Read reset vector from 0xFFFC/0xFFFD
+        int low = memory.read(0xFFFC);
+        int high = memory.read(0xFFFD);
+        PC = (high << 8) | low;
+
+        // Initialize other stuff
+        SP = 0xFD;
+        status = FLAG_UNUSED | FLAG_INTERRUPT;  // Bit 5 (unused, always 1) and bit 2 (IRQ disable)
+        A = X = Y = 0;
+    }
+
+    private void setCarry(boolean set) {
+        if (set) {
+            status |= FLAG_CARRY;
+        } else {
+            status &= ~FLAG_CARRY;
+        }
+    }
+
+    private boolean getCarry() {
+        return (status & FLAG_CARRY) != 0;
     }
 
     public void executeInstruction(int opcode) {
