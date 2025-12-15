@@ -49,8 +49,11 @@ public class Cartridge {
         //  Just ignoring writes for now
     }
 
-    public int readCHR(int address) {
-        // PPU will call this for graphics data
-        return chrROM[address] & 0xFF;
+    public byte[] getChrROM() {
+        return chrROM;
+    }
+
+    public boolean isMirrorVertical() {
+        return mirrorVertical;
     }
 }

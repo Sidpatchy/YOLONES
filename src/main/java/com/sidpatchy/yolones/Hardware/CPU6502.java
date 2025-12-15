@@ -27,8 +27,8 @@ public class CPU6502 {
     public void step() {
         int opcode = memory.read(PC);
 
-        System.out.printf("%04X  %02X     A:%02X X:%02X Y:%02X P:%02X SP:%02X\n",
-                PC, opcode, A, X, Y, status, SP);
+        //System.out.printf("%04X  %02X     A:%02X X:%02X Y:%02X P:%02X SP:%02X\n",
+        //        PC, opcode, A, X, Y, status, SP);
 
         PC++;
         executeInstruction(opcode);
@@ -56,6 +56,23 @@ public class CPU6502 {
 
     private boolean getCarry() {
         return (status & FLAG_CARRY) != 0;
+    }
+
+    public void triggerNMI() {
+        // Push PC (high byte first)
+        memory.write(0x0100 + SP--, (PC >> 8) & 0xFF);
+        memory.write(0x0100 + SP--, PC & 0xFF);
+
+        // Push status (without break flag, with unused flag set)
+        memory.write(0x0100 + SP--, (status & ~FLAG_BREAK) | FLAG_UNUSED);
+
+        // Set interrupt disable flag
+        status |= FLAG_INTERRUPT;
+
+        // Jump to NMI vector at 0xFFFA/0xFFFB
+        int low = memory.read(0xFFFA);
+        int high = memory.read(0xFFFB);
+        PC = (high << 8) | low;
     }
 
     public void executeInstruction(int opcode) {
@@ -136,12 +153,19 @@ public class CPU6502 {
                 break;
             case 0x81: // STA (indirect,X)
                 zpAddr = memory.read(PC++);
-                memory.write(zpAddr + X, A);
+                int zpX = (zpAddr + X) & 0xFF;
+                low = memory.read(zpX);
+                high = memory.read((zpX + 1) & 0xFF);
+                addr = (high << 8) | low;
+                memory.write(addr, A);
                 break;
             case 0x91: // STA (indirect),Y
                 zpAddr = memory.read(PC++);
-                memory.write(zpAddr, A);
-                memory.write(zpAddr + Y, A);
+                low = memory.read(zpAddr);
+                high = memory.read((zpAddr + 1) & 0xFF);
+                addr = ((high << 8) | low);
+                addr = (addr + Y) & 0xFFFF;
+                memory.write(addr, A);
                 break;
             case 0x8E: // STX absolute
                 low = memory.read(PC++);
@@ -180,7 +204,8 @@ public class CPU6502 {
                 setZeroAndNegativeFlags(X);
                 break;
             case 0xB6: // LDX zero page,Y
-                X = readZeroPage() + Y;
+                zpAddr = (memory.read(PC++) + Y) & 0xFF;
+                X = memory.read(zpAddr);
                 setZeroAndNegativeFlags(X);
                 break;
             case 0xAE: // LDX absolute
@@ -194,7 +219,8 @@ public class CPU6502 {
                 low = memory.read(PC++);
                 high = memory.read(PC++);
                 addr = (high << 8) | low;
-                X = memory.read(addr) + Y;
+                addr = (addr + Y) & 0xFFFF;
+                X = memory.read(addr);
                 setZeroAndNegativeFlags(X);
                 break;
             case 0xA0: // LDY immediate
@@ -275,8 +301,13 @@ public class CPU6502 {
             case 0x6C: // JMP indirect
                 low = memory.read(PC++);
                 high = memory.read(PC++);
-                addr = (high << 8) | low;
-                PC = memory.read(addr);
+                int indirectAddr = (high << 8) | low;
+
+                // Emulate 6502 page-wrap bug when low byte is 0xFF
+                int ptrLow = memory.read(indirectAddr);
+                int nextAddr = (indirectAddr & 0xFF00) | ((indirectAddr + 1) & 0x00FF);
+                int ptrHigh = memory.read(nextAddr);
+                PC = (ptrHigh << 8) | ptrLow;
                 break;
             case 0x20: // JSR (call subroutine)
                 low = memory.read(PC++);
@@ -376,7 +407,8 @@ public class CPU6502 {
             case 0xFE: // INC absolute,X
                 low = memory.read(PC++);
                 high = memory.read(PC++);
-                addr = ((high << 8) | low + X) & 0xFFFF;
+                addr = (high << 8) | low;
+                addr = (addr + X) & 0xFFFF;
                 value = (memory.read(addr) + 1) & 0xFF;
                 memory.write(addr, value);
                 setZeroAndNegativeFlags(value);
@@ -438,8 +470,20 @@ public class CPU6502 {
             case 0xE0: // CPX immediate
                 cmp(X, readImmediate());
                 break;
+            case 0xE4: // CPX zero page
+                cmp(X, readZeroPage());
+                break;
+            case 0xEC: // CPX absolute
+                cmp(X, readAbsolute());
+                break;
             case 0xC0: // CPY immediate
                 cmp(Y, readImmediate());
+                break;
+            case 0xC4: // CPY zero page
+                cmp(Y, readZeroPage());
+                break;
+            case 0xCC: // CPY absolute
+                cmp(Y, readAbsolute());
                 break;
 
             // AND
@@ -693,6 +737,36 @@ public class CPU6502 {
                 bit(readAbsolute());
                 break;
 
+            // Illegals
+            case 0x03: // SLO izx
+                addr = readIndexedIndirect();
+                value = memory.read(addr);
+
+                // ASL operation
+                int carry = (value & 0x80) != 0 ? 1 : 0;
+                value = (value << 1) & 0xFF;
+                memory.write(addr, value);
+
+                // ORA with accumulator
+                A |= value;
+
+                // Set flags
+                status = (status & ~FLAG_CARRY) | (carry != 0 ? FLAG_CARRY : 0);
+                setZeroAndNegativeFlags(A);
+                break;
+            case 0xFF: // ISC abx
+                addr = readAbsoluteXAddr();
+                value = memory.read(addr);
+
+                // INC operation
+                value = (value + 1) & 0xFF;
+                memory.write(addr, value);
+
+                // SBC operation
+                sbc(value);
+                break;
+
+
             // Misc.
             case 0xEA: // NOP (no operation)
                 break;
@@ -745,14 +819,16 @@ public class CPU6502 {
     private int readAbsoluteX() {
         int low = memory.read(PC++);
         int high = memory.read(PC++);
-        int addr = ((high << 8) | low + X) & 0xFFFF;
+        int base = (high << 8) | low;
+        int addr = (base + X) & 0xFFFF;
         return memory.read(addr);
     }
 
     private int readAbsoluteY() {
         int low = memory.read(PC++);
         int high = memory.read(PC++);
-        int addr = ((high << 8) | low + Y) & 0xFFFF;
+        int base = (high << 8) | low;
+        int addr = (base + Y) & 0xFFFF;
         return memory.read(addr);
     }
 
@@ -767,7 +843,8 @@ public class CPU6502 {
         int zpAddr = memory.read(PC++);
         int low = memory.read(zpAddr);
         int high = memory.read((zpAddr + 1) & 0xFF);
-        int addr = ((high << 8) | low + Y) & 0xFFFF;
+        int base = (high << 8) | low;
+        int addr = (base + Y) & 0xFFFF;
         return memory.read(addr);
     }
 
@@ -780,7 +857,15 @@ public class CPU6502 {
     private int readAbsoluteXAddr() {
         int low = memory.read(PC++);
         int high = memory.read(PC++);
-        return ((high << 8) | low + X) & 0xFFFF;
+        int base = (high << 8) | low;
+        return (base + X) & 0xFFFF;
+    }
+
+    private int readIndexedIndirect() {
+        int zpAddr = (memory.read(PC++) + X) & 0xFF;
+        int low = memory.read(zpAddr);
+        int high = memory.read((zpAddr + 1) & 0xFF);
+        return (high << 8) | low;
     }
 
     private void cmp(int register, int value) {
