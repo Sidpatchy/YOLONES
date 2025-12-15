@@ -25,7 +25,12 @@ public class CPU6502 {
     }
 
     public void step() {
-        int opcode = memory.read(PC++);
+        int opcode = memory.read(PC);
+
+        System.out.printf("%04X  %02X     A:%02X X:%02X Y:%02X P:%02X SP:%02X\n",
+                PC, opcode, A, X, Y, status, SP);
+
+        PC++;
         executeInstruction(opcode);
     }
 
@@ -54,7 +59,17 @@ public class CPU6502 {
     }
 
     public void executeInstruction(int opcode) {
+        int zpAddr;
+        int low;
+        int high;
+        int addr;
+        int returnAddr;
+        int offset;
+        int value;
+        int result;
+
         // https://www.nesdev.org/wiki/Visual6502wiki/6502_all_256_Opcodes
+        // https://www.nesdev.org/obelisk-6502-guide/reference.html
         switch(opcode) {
             case 0x00: // BRK
                 running = false;
@@ -62,76 +77,620 @@ public class CPU6502 {
 
             // Load / Store
             case 0xA9: // LDA immediate
+                A = readImmediate();
+                setZeroAndNegativeFlags(A);
                 break;
             case 0xA5: // LDA zero page
+                A = readZeroPage();
+                setZeroAndNegativeFlags(A);
+                break;
+            case 0xB5: // LDA zero page,X
+                A = readZeroPageX();
+                setZeroAndNegativeFlags(A);
                 break;
             case 0xAD: // LDA absolute
+                A = readAbsolute();
+                setZeroAndNegativeFlags(A);
+                break;
+            case 0xBD: // LDA absolute,X
+                A = readAbsoluteX();
+                setZeroAndNegativeFlags(A);
+                break;
+            case 0xB9: // LDA absolute,Y
+                A = readAbsoluteY();
+                setZeroAndNegativeFlags(A);
+                break;
+            case 0xA1: // LDA (indirect,X)
+                A = readIndirectX();
+                setZeroAndNegativeFlags(A);
+                break;
+            case 0xB1: // LDA (indirect),Y
+                A = readIndirectY();
+                setZeroAndNegativeFlags(A);
                 break;
             case 0x85: // STA zero page
+                zpAddr = memory.read(PC++);
+                memory.write(zpAddr, A);
+                break;
+            case 0x95: // STA zero page, X
+                zpAddr = (memory.read(PC++) + X) & 0xFF;
+                memory.write(zpAddr, A);
                 break;
             case 0x8D: // STA absolute
+                low = memory.read(PC++);
+                high = memory.read(PC++);
+                addr = (high << 8) | low;
+                memory.write(addr, A);
+                break;
+            case 0x9D: // STA absolute, X
+                low = memory.read(PC++);
+                high = memory.read(PC++);
+                addr = (high << 8) | low;
+                memory.write((addr + X) & 0xFFFF, A);
+                break;
+            case 0x99: // STA absolute, Y
+                low = memory.read(PC++);
+                high = memory.read(PC++);
+                addr = (high << 8) | low;
+                memory.write((addr + Y) & 0xFFFF, A);
+                break;
+            case 0x81: // STA (indirect,X)
+                zpAddr = memory.read(PC++);
+                memory.write(zpAddr + X, A);
+                break;
+            case 0x91: // STA (indirect),Y
+                zpAddr = memory.read(PC++);
+                memory.write(zpAddr, A);
+                memory.write(zpAddr + Y, A);
+                break;
+            case 0x8E: // STX absolute
+                low = memory.read(PC++);
+                high = memory.read(PC++);
+                addr = (high << 8) | low;
+                memory.write(addr, X);
+                break;
+            case 0x86: // STX zero page
+                zpAddr = memory.read(PC++);
+                memory.write(zpAddr, X);
+                break;
+            case 0x96: // STX zero page, Y
+                zpAddr = (memory.read(PC++) + Y) & 0xFF;
+                memory.write(zpAddr, X);
+                break;
+            case 0x84: // STY zero page
+                zpAddr = memory.read(PC++);
+                memory.write(zpAddr, Y);
+                break;
+            case 0x94: // STY zero page, X
+                zpAddr = (memory.read(PC++) + X) & 0xFF;
+                memory.write(zpAddr, Y);
+                break;
+            case 0x8C: // STY absolute
+                low = memory.read(PC++);
+                high = memory.read(PC++);
+                addr = (high << 8) | low;
+                memory.write(addr, Y);
                 break;
             case 0xA2: // LDX immediate
+                X = memory.read(PC++);
+                setZeroAndNegativeFlags(X);
+                break;
+            case 0xA6: // LDX zero page
+                X = readZeroPage();
+                setZeroAndNegativeFlags(X);
+                break;
+            case 0xB6: // LDX zero page,Y
+                X = readZeroPage() + Y;
+                setZeroAndNegativeFlags(X);
+                break;
+            case 0xAE: // LDX absolute
+                low = memory.read(PC++);
+                high = memory.read(PC++);
+                addr = (high << 8) | low;
+                X = memory.read(addr);
+                setZeroAndNegativeFlags(X);
+                break;
+            case 0xBE: // LDX absolute,Y
+                low = memory.read(PC++);
+                high = memory.read(PC++);
+                addr = (high << 8) | low;
+                X = memory.read(addr) + Y;
+                setZeroAndNegativeFlags(X);
                 break;
             case 0xA0: // LDY immediate
+                Y = memory.read(PC++);
+                setZeroAndNegativeFlags(Y);
+                break;
+            case 0xA4: // LDY zero page
+                Y = readZeroPage();
+                setZeroAndNegativeFlags(Y);
+                break;
+            case 0xB4: // LDY zero page,X
+                Y = readZeroPage() + X;
+                setZeroAndNegativeFlags(Y);
+                break;
+            case 0xAC: // LDY absolute
+                low = memory.read(PC++);
+                high = memory.read(PC++);
+                addr = (high << 8) | low;
+                Y = memory.read(addr);
+                setZeroAndNegativeFlags(Y);
+                break;
+            case 0xBC: // LDY absolute,X
+                low = memory.read(PC++);
+                high = memory.read(PC++);
+                addr = (high << 8) | low;
+                Y = memory.read(addr) + X;
+                setZeroAndNegativeFlags(Y);
                 break;
 
             // Transfers
             case 0xAA: // TAX (A -> X)
+                X = A;
+                setZeroAndNegativeFlags(X);
                 break;
             case 0x8A: // TXA (X -> A)
+                A = X;
+                setZeroAndNegativeFlags(A);
                 break;
             case 0xA8: // TAY (A -> Y)
+                Y = A;
+                setZeroAndNegativeFlags(Y);
                 break;
             case 0x98: // TYA (Y -> A)
+                A = Y;
+                setZeroAndNegativeFlags(A);
+                break;
+            case 0xBA: // TSX (SP -> X)
+                X = SP;
+                setZeroAndNegativeFlags(X);
                 break;
 
             // Stack Operations
             case 0x9A: // TXS (X -> SP, set up stack)
+                SP = X;
                 break;
             case 0x48: // PHA (push A to stack)
+                memory.write(0x0100 + SP, A);
+                SP--;
                 break;
             case 0x68: // PLA (pull A from stack)
+                A = memory.read(0x0100 + ++SP);
+                setZeroAndNegativeFlags(A);
+                break;
+            case 0x08: // PHP (push status to stack)
+                memory.write(0x0100 + SP--, status | FLAG_BREAK | FLAG_UNUSED);
+                break;
+            case 0x28: // PLP (pull status from stack)
+                status = memory.read(0x0100 + ++SP) & ~FLAG_BREAK;
                 break;
 
             // Jumps / Calls
             case 0x4C: // JMP absolute
+                low = memory.read(PC++);
+                high = memory.read(PC++);
+                addr = (high << 8) | low;
+                PC = addr;
+                break;
+            case 0x6C: // JMP indirect
+                low = memory.read(PC++);
+                high = memory.read(PC++);
+                addr = (high << 8) | low;
+                PC = memory.read(addr);
                 break;
             case 0x20: // JSR (call subroutine)
+                low = memory.read(PC++);
+                high = memory.read(PC++);
+                addr = (high << 8) | low;
+
+                // Push return address onto stack
+                returnAddr = PC - 1;
+                memory.write(0x0100 + SP--, (returnAddr >> 8) & 0xFF);
+                memory.write(0x0100 + SP--, returnAddr & 0xFF);
+
+                PC = addr; // jump to subroutine
                 break;
             case 0x60: // RTS (return from subroutine)
+                low = memory.read(0x0100 + ++SP);
+                high = memory.read(0x0100 + ++SP);
+                PC = ((high << 8) | low) + 1;
+                break;
+            case 0x40: // RTI (return from interrupt)
+                status = (memory.read(0x0100 + ++SP) & ~FLAG_BREAK) | FLAG_UNUSED;  // Status first
+                low = memory.read(0x0100 + ++SP);     // Then PC low
+                high = memory.read(0x0100 + ++SP);    // Then PC high
+                PC = (high << 8) | low;
                 break;
 
             // Branches
             case 0xD0: // BNE (branch if not equal/zero flag clear)
+                offset = (byte) memory.read(PC++);  // Cast to signed byte
+                if ((status & FLAG_ZERO) == 0) {
+                    PC += offset;
+                }
                 break;
             case 0xF0: // BEQ (branch if equal/zero flag set)
+                offset = (byte) memory.read(PC++);  // Cast to signed byte
+                if ((status & FLAG_ZERO) != 0) {
+                    PC += offset;
+                }
                 break;
             case 0x10: // BPL (branch if plus/negative flag clear)
+                offset = (byte) memory.read(PC++);  // Cast to signed byte
+                if ((status & FLAG_NEGATIVE) == 0) {
+                    PC += offset;
+                }
                 break;
             case 0x30: // BMI (branch if minus/negative flag set)
+                offset = (byte) memory.read(PC++);  // Cast to signed byte
+                if ((status & FLAG_NEGATIVE) != 0) {
+                    PC += offset;
+                }
+                break;
+            case 0x90: // BCC (branch if carry flag clear)
+                offset = (byte) memory.read(PC++);
+                if ((status & FLAG_CARRY) == 0) {
+                    PC += offset;
+                }
+                break;
+            case 0xB0: // BCS (branch if carry flag set)
+                offset = (byte) memory.read(PC++);
+                if ((status & FLAG_CARRY) != 0) {
+                    PC += offset;
+                }
+                break;
+            case 0x50: // BVC (branch if overflow flag clear)
+                offset = (byte) memory.read(PC++);
+                if ((status & FLAG_OVERFLOW) == 0) {
+                    PC += offset;
+                }
+                break;
+            case 0x70: // BVS (branch if overflow flag set)
+                offset = (byte) memory.read(PC++);
+                if ((status & FLAG_OVERFLOW) != 0) {
+                    PC += offset;
+                }
                 break;
 
             // Increment / Decrement
+            case 0xE6: // INC zero page
+                zpAddr = memory.read(PC++);
+                value = (memory.read(zpAddr) + 1) & 0xFF;
+                memory.write(zpAddr, value);
+                setZeroAndNegativeFlags(value);
+                break;
+            case 0xF6: // INC zero page,X
+                zpAddr = (memory.read(PC++) + X) & 0xFF;
+                value = (memory.read(zpAddr) + 1) & 0xFF;
+                memory.write(zpAddr, value);
+                setZeroAndNegativeFlags(value);
+                break;
+            case 0xEE: // INC absolute
+                low = memory.read(PC++);
+                high = memory.read(PC++);
+                addr = (high << 8) | low;
+                value = (memory.read(addr) + 1) & 0xFF;
+                memory.write(addr, value);
+                setZeroAndNegativeFlags(value);
+                break;
+            case 0xFE: // INC absolute,X
+                low = memory.read(PC++);
+                high = memory.read(PC++);
+                addr = ((high << 8) | low + X) & 0xFFFF;
+                value = (memory.read(addr) + 1) & 0xFF;
+                memory.write(addr, value);
+                setZeroAndNegativeFlags(value);
+                break;
             case 0xE8: // INX (increment X)
+                X = (X + 1) & 0xFF;
+                setZeroAndNegativeFlags(X);
                 break;
             case 0xC8: // INY (increment Y)
+                Y = (Y + 1) & 0xFF;
+                setZeroAndNegativeFlags(Y);
+                break;
+            case 0xC6: // DEC zero page
+                dec(memory.read(PC++));
+                break;
+            case 0xD6: // DEC zero page,X
+                dec((memory.read(PC++) + X) & 0xFF);
+                break;
+            case 0xCE: // DEC absolute
+                dec(readAbsoluteAddr());
+                break;
+            case 0xDE: // DEC absolute,X
+                dec(readAbsoluteXAddr());
                 break;
             case 0xCA: // DEX (decrement X)
+                X = (X - 1) & 0xFF;
+                setZeroAndNegativeFlags(X);
                 break;
             case 0x88: // DEY (decrement Y)
+                Y = (Y - 1) & 0xFF;
+                setZeroAndNegativeFlags(Y);
                 break;
 
             // Comparison
-            case 0xC9: // CMP immediate (compare with A)
+            case 0xC9: // CMP immediate
+                cmp(A, readImmediate());
+                break;
+            case 0xC5: // CMP zero page
+                cmp(A, readZeroPage());
+                break;
+            case 0xD5: // CMP zero page,X
+                cmp(A, readZeroPageX());
+                break;
+            case 0xCD: // CMP absolute
+                cmp(A, readAbsolute());
+                break;
+            case 0xDD: // CMP absolute,X
+                cmp(A, readAbsoluteX());
+                break;
+            case 0xD9: // CMP absolute,Y
+                cmp(A, readAbsoluteY());
+                break;
+            case 0xC1: // CMP (indirect,X)
+                cmp(A, readIndirectX());
+                break;
+            case 0xD1: // CMP (indirect),Y
+                cmp(A, readIndirectY());
+                break;
+            case 0xE0: // CPX immediate
+                cmp(X, readImmediate());
+                break;
+            case 0xC0: // CPY immediate
+                cmp(Y, readImmediate());
+                break;
+
+            // AND
+            case 0x29: // AND immediate
+                A &= readImmediate();
+                setZeroAndNegativeFlags(A);
+                break;
+            case 0x25: // AND zero page
+                A &= readZeroPage();
+                setZeroAndNegativeFlags(A);
+                break;
+            case 0x35: // AND zero page,X
+                A &= readZeroPageX();
+                setZeroAndNegativeFlags(A);
+                break;
+            case 0x2D: // AND absolute
+                A &= readAbsolute();
+                setZeroAndNegativeFlags(A);
+                break;
+            case 0x3D: // AND absolute,X
+                A &= readAbsoluteX();
+                setZeroAndNegativeFlags(A);
+                break;
+            case 0x39: // AND absolute,Y
+                A &= readAbsoluteY();
+                setZeroAndNegativeFlags(A);
+                break;
+            case 0x21: // AND (indirect,X)
+                A &= readIndirectX();
+                setZeroAndNegativeFlags(A);
+                break;
+            case 0x31:
+                A &= readIndirectY();
+                setZeroAndNegativeFlags(A);
+                break;
+
+            // OR
+            case 0x09: // OR immediate
+                A |= readImmediate();
+                setZeroAndNegativeFlags(A);
+                break;
+            case 0x05: // OR zero page
+                A |= readZeroPage();
+                setZeroAndNegativeFlags(A);
+                break;
+            case 0x15: // OR zero page,X
+                A |= readZeroPageX();
+                setZeroAndNegativeFlags(A);
+                break;
+            case 0x0D: // OR absolute
+                A |= readAbsolute();
+                setZeroAndNegativeFlags(A);
+                break;
+            case 0x1D: // OR absolute,X
+                A |= readAbsoluteX();
+                setZeroAndNegativeFlags(A);
+                break;
+            case 0x19: // OR absolute,Y
+                A |= readAbsoluteY();
+                setZeroAndNegativeFlags(A);
+                break;
+            case 0x01: // OR (indirect,X)
+                A |= readIndirectX();
+                setZeroAndNegativeFlags(A);
+                break;
+            case 0x11: // OR (indirect),Y
+                A |= readIndirectY();
+                setZeroAndNegativeFlags(A);
+                break;
+
+            // Exclusive OR
+            case 0x49: // EOR immediate
+                A ^= readImmediate();
+                setZeroAndNegativeFlags(A);
+                break;
+            case 0x45: // EOR zero page
+                A ^= readZeroPage();
+                setZeroAndNegativeFlags(A);
+                break;
+            case 0x55: // EOR zero page,X
+                A ^= readZeroPageX();
+                setZeroAndNegativeFlags(A);
+                break;
+            case 0x4D: // EOR absolute
+                A ^= readAbsolute();
+                setZeroAndNegativeFlags(A);
+                break;
+            case 0x5D: // EOR absolute,X
+                A ^= readAbsoluteX();
+                setZeroAndNegativeFlags(A);
+                break;
+            case 0x59: // EOR absolute,Y
+                A ^= readAbsoluteY();
+                setZeroAndNegativeFlags(A);
+                break;
+            case 0x41: // EOR (indirect,X)
+                A ^= readIndirectX();
+                setZeroAndNegativeFlags(A);
+                break;
+            case 0x51: // EOR (indirect),Y
+                A ^= readIndirectY();
+                setZeroAndNegativeFlags(A);
+                break;
+
+            // Subtract with Carry
+            case 0xE9: // SBC immediate
+                sbc(readImmediate());
+                break;
+            case 0xE5: // SBC zero page
+                sbc(readZeroPage());
+                break;
+            case 0xF5: // SBC zero page,X
+                sbc(readZeroPageX());
+                break;
+            case 0xED: // SBC absolute
+                sbc(readAbsolute());
+                break;
+            case 0xFD: // SBC absolute,X
+                sbc(readAbsoluteX());
+                break;
+            case 0xF9: // SBC absolute,Y
+                sbc(readAbsoluteY());
+                break;
+            case 0xE1: // SBC (indirect,X)
+                sbc(readIndirectX());
+                break;
+            case 0xF1: // SBC (indirect),Y
+                sbc(readIndirectY());
+                break;
+
+            // Add with Carry
+            case 0x69: // ADC immediate
+                adc(readImmediate());
+                break;
+            case 0x65: // ADC zero page
+                adc(readZeroPage());
+                break;
+            case 0x75: // ADC zero page,X
+                adc(readZeroPageX());
+                break;
+            case 0x6D: // ADC absolute
+                adc(readAbsolute());
+                break;
+            case 0x7D: // ADC absolute,X
+                adc(readAbsoluteX());
+                break;
+            case 0x79: // ADC absolute,Y
+                adc(readAbsoluteY());
+                break;
+            case 0x61: // ADC (indirect,X)
+                adc(readIndirectX());
+                break;
+            case 0x71: // ADC (indirect),Y
+                adc(readIndirectY());
+                break;
+
+            // Shifts and Rotates
+            case 0x4A: // LSR accumulator
+                setCarry((A & 0x01) != 0);  // Bit 0 goes to carry
+                A = (A >> 1) & 0x7F;        // Shift right, clear bit 7
+                setZeroAndNegativeFlags(A);
+                break;
+            case 0x46: // LSR zero page
+                lsr(memory.read(PC++), true);
+                break;
+            case 0x56: // LSR zero page,X
+                lsr((memory.read(PC++) + X) & 0xFF, true);
+                break;
+            case 0x4E: // LSR absolute
+                lsr(readAbsoluteAddr(), false);
+                break;
+            case 0x5E: // LSR absolute,X
+                lsr(readAbsoluteXAddr(), false);
+                break;
+            case 0x0A: // ASL accumulator
+                setCarry((A & 0x80) != 0);  // Bit 7 goes to carry
+                A = (A << 1) & 0xFF;        // Shift left, bit 0 becomes 0
+                setZeroAndNegativeFlags(A);
+                break;
+            case 0x06: // ASL zero page
+                asl(memory.read(PC++));
+                break;
+            case 0x16: // ASL zero page,X
+                asl((memory.read(PC++) + X) & 0xFF);
+                break;
+            case 0x0E: // ASL absolute
+                asl(readAbsoluteAddr());
+                break;
+            case 0x1E: // ASL absolute,X
+                asl(readAbsoluteXAddr());
+                break;
+            case 0x2A: // ROL accumulator
+                rol_accumulator();
+                break;
+            case 0x26: // ROL zero page
+                rol(memory.read(PC++));
+                break;
+            case 0x36: // ROL zero page,X
+                rol((memory.read(PC++) + X) & 0xFF);
+                break;
+            case 0x2E: // ROL absolute
+                rol(readAbsoluteAddr());
+                break;
+            case 0x3E: // ROL absolute,X
+                rol(readAbsoluteXAddr());
+                break;
+            case 0x6A: // ROR accumulator
+                ror_accumulator();
+                break;
+            case 0x66: // ROR zero page
+                ror(memory.read(PC++));
+                break;
+            case 0x76: // ROR zero page,X
+                ror((memory.read(PC++) + X) & 0xFF);
+                break;
+            case 0x6E: // ROR absolute
+                ror(readAbsoluteAddr());
+                break;
+            case 0x7E: // ROR absolute,X
+                ror(readAbsoluteXAddr());
                 break;
 
             // Flags
             case 0x18: // CLC (clear carry flag)
+                status &= ~FLAG_CARRY;
                 break;
             case 0x38: // SEC (set carry flag)
+                status |= FLAG_CARRY;
                 break;
-            case 0xD8: // CLD (clear decimal flag) - NES ignores this?
+            case 0xD8: // CLD (clear decimal flag)
+                status &= ~FLAG_DECIMAL;
+                break;
+            case 0xF8: // SED (set decimal flag)
+                status |= FLAG_DECIMAL;
+                break;
+            case 0x78: // SEI (set interrupt disable flag)
+                status |= FLAG_INTERRUPT;
+                break;
+            case 0x58: // CLI (clear interrupt disable flag)
+                status &= ~FLAG_INTERRUPT;
+                break;
+            case 0xB8: // CLV (clear overflow flag)
+                status &= ~FLAG_OVERFLOW;
+                break;
+
+            // Bit Test
+            case 0x24: // BIT zero page
+                bit(readZeroPage());
+                break;
+            case 0x2C: // BIT absolute
+                bit(readAbsolute());
                 break;
 
             // Misc.
@@ -143,6 +702,191 @@ public class CPU6502 {
                 running = false;  // Halt on unknown opcode
                 break;
         }
+    }
+
+    private void setZeroAndNegativeFlags(int value) {
+        // Zero flag
+        if (value == 0) {
+            status |= FLAG_ZERO;
+        } else {
+            status &= ~FLAG_ZERO;
+        }
+
+        // Negative flag (bit 7)
+        if ((value & 0x80) != 0) {
+            status |= FLAG_NEGATIVE;
+        } else {
+            status &= ~FLAG_NEGATIVE;
+        }
+    }
+
+    // Helper methods for addressing modes
+    private int readImmediate() {
+        return memory.read(PC++);
+    }
+
+    private int readZeroPage() {
+        int addr = memory.read(PC++);
+        return memory.read(addr);
+    }
+
+    private int readZeroPageX() {
+        int addr = (memory.read(PC++) + X) & 0xFF;
+        return memory.read(addr);
+    }
+
+    private int readAbsolute() {
+        int low = memory.read(PC++);
+        int high = memory.read(PC++);
+        int addr = (high << 8) | low;
+        return memory.read(addr);
+    }
+
+    private int readAbsoluteX() {
+        int low = memory.read(PC++);
+        int high = memory.read(PC++);
+        int addr = ((high << 8) | low + X) & 0xFFFF;
+        return memory.read(addr);
+    }
+
+    private int readAbsoluteY() {
+        int low = memory.read(PC++);
+        int high = memory.read(PC++);
+        int addr = ((high << 8) | low + Y) & 0xFFFF;
+        return memory.read(addr);
+    }
+
+    private int readIndirectX() {
+        int zpAddr = (memory.read(PC++) + X) & 0xFF;
+        int low = memory.read(zpAddr);
+        int high = memory.read((zpAddr + 1) & 0xFF);
+        return memory.read((high << 8) | low);
+    }
+
+    private int readIndirectY() {
+        int zpAddr = memory.read(PC++);
+        int low = memory.read(zpAddr);
+        int high = memory.read((zpAddr + 1) & 0xFF);
+        int addr = ((high << 8) | low + Y) & 0xFFFF;
+        return memory.read(addr);
+    }
+
+    private int readAbsoluteAddr() {
+        int low = memory.read(PC++);
+        int high = memory.read(PC++);
+        return (high << 8) | low;
+    }
+
+    private int readAbsoluteXAddr() {
+        int low = memory.read(PC++);
+        int high = memory.read(PC++);
+        return ((high << 8) | low + X) & 0xFFFF;
+    }
+
+    private void cmp(int register, int value) {
+        int result = register - value;
+        setCarry(register >= value);
+        setZeroAndNegativeFlags(result & 0xFF);
+    }
+
+    private void adc(int value) {
+        int result = A + value + (getCarry() ? 1 : 0);
+
+        // Carry flag: set if result > 255
+        setCarry(result > 0xFF);
+
+        // Overflow: set if sign bit is wrong
+        // (positive + positive = negative) or (negative + negative = positive)
+        boolean overflow = ((A ^ result) & (value ^ result) & 0x80) != 0;
+        if (overflow) {
+            status |= FLAG_OVERFLOW;
+        } else {
+            status &= ~FLAG_OVERFLOW;
+        }
+
+        A = result & 0xFF;
+        setZeroAndNegativeFlags(A);
+    }
+
+    private void sbc(int value) {
+        adc(value ^ 0xFF);
+    }
+
+    private void bit(int value) {
+        // Zero flag: set if (A & value) == 0
+        if ((A & value) == 0) {
+            status |= FLAG_ZERO;
+        } else {
+            status &= ~FLAG_ZERO;
+        }
+
+        // Overflow flag: copy bit 6 of value
+        if ((value & 0x40) != 0) {
+            status |= FLAG_OVERFLOW;
+        } else {
+            status &= ~FLAG_OVERFLOW;
+        }
+
+        // Negative flag: copy bit 7 of value
+        if ((value & 0x80) != 0) {
+            status |= FLAG_NEGATIVE;
+        } else {
+            status &= ~FLAG_NEGATIVE;
+        }
+    }
+
+    private void lsr(int addr, boolean zeroPage) {
+        int value = memory.read(addr);
+        setCarry((value & 0x01) != 0);
+        value = (value >> 1) & 0x7F;
+        memory.write(addr, value);
+        setZeroAndNegativeFlags(value);
+    }
+
+    private void asl(int addr) {
+        int value = memory.read(addr);
+        setCarry((value & 0x80) != 0);
+        value = (value << 1) & 0xFF;
+        memory.write(addr, value);
+        setZeroAndNegativeFlags(value);
+    }
+
+    private void rol_accumulator() {
+        boolean oldCarry = getCarry();
+        setCarry((A & 0x80) != 0);
+        A = ((A << 1) | (oldCarry ? 1 : 0)) & 0xFF;
+        setZeroAndNegativeFlags(A);
+    }
+
+    private void rol(int addr) {
+        int value = memory.read(addr);
+        boolean oldCarry = getCarry();
+        setCarry((value & 0x80) != 0);
+        value = ((value << 1) | (oldCarry ? 1 : 0)) & 0xFF;
+        memory.write(addr, value);
+        setZeroAndNegativeFlags(value);
+    }
+
+    private void ror_accumulator() {
+        boolean oldCarry = getCarry();
+        setCarry((A & 0x01) != 0);
+        A = ((A >> 1) | (oldCarry ? 0x80 : 0)) & 0xFF;
+        setZeroAndNegativeFlags(A);
+    }
+
+    private void ror(int addr) {
+        int value = memory.read(addr);
+        boolean oldCarry = getCarry();
+        setCarry((value & 0x01) != 0);
+        value = ((value >> 1) | (oldCarry ? 0x80 : 0)) & 0xFF;
+        memory.write(addr, value);
+        setZeroAndNegativeFlags(value);
+    }
+
+    private void dec(int addr) {
+        int value = (memory.read(addr) - 1) & 0xFF;
+        memory.write(addr, value);
+        setZeroAndNegativeFlags(value);
     }
 
     public boolean isRunning() { return running; }
