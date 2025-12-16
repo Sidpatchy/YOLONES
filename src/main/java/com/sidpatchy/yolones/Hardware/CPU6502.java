@@ -238,7 +238,7 @@ public class CPU6502 {
                 setZeroAndNegativeFlags(Y);
                 break;
             case 0xB4: // LDY zero page,X
-                Y = readZeroPage() + X;
+                Y = readZeroPageX();
                 setZeroAndNegativeFlags(Y);
                 break;
             case 0xAC: // LDY absolute
@@ -249,10 +249,7 @@ public class CPU6502 {
                 setZeroAndNegativeFlags(Y);
                 break;
             case 0xBC: // LDY absolute,X
-                low = memory.read(PC++);
-                high = memory.read(PC++);
-                addr = (high << 8) | low;
-                Y = memory.read(addr) + X;
+                Y = readAbsoluteX();
                 setZeroAndNegativeFlags(Y);
                 break;
 
