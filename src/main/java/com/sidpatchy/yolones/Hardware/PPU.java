@@ -1,6 +1,10 @@
 package com.sidpatchy.yolones.Hardware;
 
+import org.apache.logging.log4j.LogManager;
+import org.apache.logging.log4j.Logger;
+
 public class PPU {
+    private static final Logger logger = LogManager.getLogger(PPU.class);
     private PPUMemory memory;
     private int[] framebuffer = new int[256 * 240];  // RGB output
 
@@ -71,14 +75,14 @@ public class PPU {
 
         switch(addr & 0x2007) {
             case 0x2000:  // PPUCTRL
-                System.out.printf("PPUCTRL write: 0x%02X (NMI enable: %b)\n",
-                        value, (value & 0x80) != 0);
+                logger.debug(String.format("PPUCTRL write: 0x%02X (NMI enable: %b)",
+                        value, (value & 0x80) != 0));
                 ppuCtrl = value;
                 break;
 
             case 0x2001:  // PPUMASK
-                System.out.printf("PPUMASK write: 0x%02X (bg=%b, sprites=%b)\n",
-                        value, (value & 0x08) != 0, (value & 0x10) != 0);
+                logger.debug(String.format("PPUMASK write: 0x%02X (bg=%b, sprites=%b)",
+                        value, (value & 0x08) != 0, (value & 0x10) != 0));
                 ppuMask = value;
                 break;
 
@@ -108,7 +112,7 @@ public class PPU {
 
             case 0x2007:  // PPUDATA
                 if (ppuAddr >= 0x3F00 && ppuAddr < 0x3F20) {
-                    System.out.printf("Palette[0x%02X] = 0x%02X\n", ppuAddr & 0x1F, value);
+                    logger.trace(String.format("Palette[0x%02X] = 0x%02X", ppuAddr & 0x1F, value));
                 }
                 memory.write(ppuAddr, value);
                 ppuAddr = (ppuAddr + ((ppuCtrl & 0x04) != 0 ? 32 : 1)) & 0x3FFF;
@@ -126,8 +130,8 @@ public class PPU {
 
             if (scanline == 241) {
                 ppuStatus |= 0x80;  // Set VBlank flag
-                System.out.printf("Scanline 241 (VBlank): PPUCTRL=0x%02X, NMI will fire=%b\n",
-                        ppuCtrl, (ppuCtrl & 0x80) != 0);
+                logger.debug(String.format("Scanline 241 (VBlank): PPUCTRL=0x%02X, NMI will fire=%b",
+                        ppuCtrl, (ppuCtrl & 0x80) != 0));
 
                 if ((ppuCtrl & 0x80) != 0) {
                     return true;  // Trigger NMI
@@ -153,7 +157,7 @@ public class PPU {
             return;  // Rendering disabled
         }
 
-        System.out.println("Actually rendering a frame!");
+        logger.debug("Rendering frame");
 
         // Clear framebuffer to universal background color (optional, ensures fully transparent backgrounds look right)
         int universalColor = NES_PALETTE[memory.read(0x3F00) & 0x3F];

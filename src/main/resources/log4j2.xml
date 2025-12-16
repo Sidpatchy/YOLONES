@@ -1,0 +1,28 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<Configuration status="WARN" monitorInterval="30">
+    <Properties>
+        <Property name="pattern">[%d{yyyy-MM-dd HH:mm:ss.SSS}] [%t] %-5level %c{1.} - %msg%n</Property>
+    </Properties>
+
+    <Appenders>
+        <Console name="Console" target="SYSTEM_OUT">
+            <PatternLayout pattern="${pattern}"/>
+        </Console>
+    </Appenders>
+
+    <Loggers>
+        <!-- Package-specific logging level -->
+        <Logger name="com.sidpatchy.yolones" level="info" additivity="false">
+            <AppenderRef ref="Console"/>
+        </Logger>
+
+        <!-- Enable very verbose CPU instruction trace by setting level to TRACE at runtime if needed -->
+        <Logger name="com.sidpatchy.yolones.Hardware.CPU6502" level="info" additivity="false">
+            <AppenderRef ref="Console"/>
+        </Logger>
+
+        <Root level="info">
+            <AppenderRef ref="Console"/>
+        </Root>
+    </Loggers>
+</Configuration>

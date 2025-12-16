@@ -5,13 +5,20 @@ import com.sidpatchy.yolones.Hardware.Cartridge;
 import com.sidpatchy.yolones.Hardware.Memory;
 import com.sidpatchy.yolones.Hardware.PPU;
 import com.sidpatchy.yolones.Hardware.PPUMemory;
+import com.sidpatchy.yolones.input.ControllerHandler;
+import com.sidpatchy.yolones.input.KeyboardController;
+import org.apache.logging.log4j.LogManager;
+import org.apache.logging.log4j.Logger;
 
 import java.io.IOException;
 
 public class Main {
+    private static final Logger logger = LogManager.getLogger(Main.class);
     public static void main(String[] args) throws IOException, InterruptedException {
-        // 1. Load the ROM
+        // 1. Load the ROM, various roms listed for testing purposes.
         Cartridge cart = new Cartridge("/var/home/osprey/Downloads/nestest.nes");
+        //Cartridge cart = new Cartridge("/var/home/osprey/Games/ROMs/NES Games/AccuracyCoin.nes");
+        //Cartridge cart = new Cartridge("/var/home/osprey/Games/ROMs/NES Games/Super Mario Bros. (World).nes");
 
         // 2. Create PPU memory and PPU
         PPUMemory ppuMemory = new PPUMemory(cart.getChrROM(), cart.isMirrorVertical());
@@ -25,36 +32,34 @@ public class Main {
 
         // 5. Create window
         FrameBufferRenderer renderer = new FrameBufferRenderer(3);
-        FrameBufferRenderer.createWindow(renderer);
+        javax.swing.JFrame frame = FrameBufferRenderer.createWindow(renderer);
 
-        renderer.addKeyListener(new java.awt.event.KeyAdapter() {
-            public void keyPressed(java.awt.event.KeyEvent e) {
-                if (e.getKeyCode() == java.awt.event.KeyEvent.VK_ENTER) {
-                    memory.setController(0x08);  // START button
-                }
-            }
-            public void keyReleased(java.awt.event.KeyEvent e) {
-                memory.setController(0x00);
-            }
-        });
+        // Input setup via ControllerHandler
+        // Keyboard input: WASD (D-pad), Z (B), X (A), Enter (Start), Shift (Select)
+        ControllerHandler controllerHandler = new ControllerHandler(memory);
+        KeyboardController keyboard = new KeyboardController();
+        controllerHandler.setController(keyboard, renderer, frame);
         renderer.setFocusable(true);
+        renderer.requestFocusInWindow();
 
         // 6. Reset the CPU (sets PC to reset vector)
         cpu.reset();
 
         // 7. Run the emulation loop
         while (cpu.isRunning()) {
+            // Update input state
+            controllerHandler.update();
             cpu.step();
 
             for (int i = 0; i < 3; i++) {
                 if (ppu.tick()) {
-                    System.out.println("NMI triggered!");
+                    logger.debug("NMI triggered");
                     cpu.triggerNMI();
                 }
             }
 
             if (ppu.getScanline() == 0 && ppu.getCycle() == 0) {
-                System.out.println("Frame complete, updating display");
+                logger.info("Frame complete, updating display");
                 renderer.updateFrame(ppu.getFramebuffer());
             }
         }

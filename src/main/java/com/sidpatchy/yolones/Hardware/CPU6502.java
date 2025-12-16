@@ -1,6 +1,10 @@
 package com.sidpatchy.yolones.Hardware;
 
+import org.apache.logging.log4j.LogManager;
+import org.apache.logging.log4j.Logger;
+
 public class CPU6502 {
+    private static final Logger logger = LogManager.getLogger(CPU6502.class);
     // Status flag constants
     private static final int FLAG_CARRY     = 0b00000001;
     private static final int FLAG_ZERO      = 0b00000010;
@@ -27,8 +31,10 @@ public class CPU6502 {
     public void step() {
         int opcode = memory.read(PC);
 
-        //System.out.printf("%04X  %02X     A:%02X X:%02X Y:%02X P:%02X SP:%02X\n",
-        //        PC, opcode, A, X, Y, status, SP);
+        if (logger.isTraceEnabled()) {
+            logger.trace(String.format("%04X  %02X     A:%02X X:%02X Y:%02X P:%02X SP:%02X",
+                    PC, opcode, A, X, Y, status, SP));
+        }
 
         PC++;
         executeInstruction(opcode);
@@ -772,7 +778,7 @@ public class CPU6502 {
                 break;
 
             default:
-                System.out.printf("Unknown opcode: 0x%02X at PC: 0x%04X\n", opcode, PC - 1);
+                logger.error(String.format("Unknown opcode: 0x%02X at PC: 0x%04X", opcode, PC - 1));
                 running = false;  // Halt on unknown opcode
                 break;
         }
