@@ -268,6 +268,42 @@ public class CPU6502 {
                 Y = readAbsoluteX();
                 setZeroAndNegativeFlags(Y);
                 break;
+            case 0x83: // SAX (indirect,X)
+                memory.write(readIndexedIndirect(), A & X);
+                break;
+            case 0x87: // SAX zero page
+                memory.write(memory.read(PC++), A & X);
+                break;
+            case 0x8F: // SAX absolute
+                memory.write(readAbsoluteAddr(), A & X);
+                break;
+            case 0x97: // SAX zero page,Y
+                memory.write((memory.read(PC++) + Y) & 0xFF, A & X);
+                break;
+            case 0xA3: // LAX (indirect,X)
+                A = X = readIndirectX();
+                setZeroAndNegativeFlags(A);
+                break;
+            case 0xA7: // LAX zero page
+                A = X = readZeroPage();
+                setZeroAndNegativeFlags(A);
+                break;
+            case 0xAF: // LAX absolute
+                A = X = readAbsolute();
+                setZeroAndNegativeFlags(A);
+                break;
+            case 0xB3: // LAX (indirect),Y
+                A = X = readIndirectY();
+                setZeroAndNegativeFlags(A);
+                break;
+            case 0xB7: // LAX zero page,Y
+                A = X = memory.read((memory.read(PC++) + Y) & 0xFF);
+                setZeroAndNegativeFlags(A);
+                break;
+            case 0xBF: // LAX absolute,Y
+                A = X = readAbsoluteY();
+                setZeroAndNegativeFlags(A);
+                break;
 
             // Transfers
             case 0xAA: // TAX (A -> X)
@@ -811,9 +847,114 @@ public class CPU6502 {
             case 0xE3: rmwCombo(readIndexedIndirect(), this::incValue, this::sbc); break;
             case 0xF3: rmwCombo(readIndirectYAddr(), this::incValue, this::sbc); break;
 
+            case 0x0B, 0x2B: // ANC (AND + set carry from bit 7)
+                A &= readImmediate();
+                setZeroAndNegativeFlags(A);
+                setCarry((A & 0x80) != 0);
+                break;
+
+            case 0x4B: // ALR (AND + LSR)
+                A &= readImmediate();
+                setCarry((A & 0x01) != 0);
+                A = (A >> 1) & 0x7F;
+                setZeroAndNegativeFlags(A);
+                break;
+
+            case 0x6B: // ARR (AND + ROR with special carry/overflow)
+                A &= readImmediate();
+                boolean oldCarry = getCarry();
+                A = ((A >> 1) | (oldCarry ? 0x80 : 0)) & 0xFF;
+
+                // Special carry/overflow logic
+                setCarry((A & 0x40) != 0);  // Bit 6 -> Carry
+                boolean overflow = ((A & 0x40) != 0) ^ ((A & 0x20) != 0);  // Bit 6 XOR bit 5
+                if (overflow) {
+                    status |= FLAG_OVERFLOW;
+                } else {
+                    status &= ~FLAG_OVERFLOW;
+                }
+                setZeroAndNegativeFlags(A);
+                break;
+
+            case 0x8B: // XAA (highly unstable - magic constant varies by chip)
+                // Most common behavior: A = (A | 0xEE) & X & immediate
+                // But 0xEE can be 0x00, 0xFF, 0x11, etc. depending on hardware
+                // Using 0xEE as most common for NES
+                A = (A | 0xEE) & X & readImmediate();
+                setZeroAndNegativeFlags(A);
+                break;
+
+            case 0xAB: // LAX immediate (aka LXA/OAL) — unstable
+                // On NMOS 6502 as used in the NES, this reads the immediate, ANDs it with
+                // (A OR a hardware-specific constant), then loads both A and X with the result.
+                // The constant varies by chip; 0xEE is a commonly observed value on NES.
+                // This matches hardware tests better than the "pure immediate" variant.
+                int immLax = readImmediate();
+                A = X = (A | 0xEE) & immLax;
+                setZeroAndNegativeFlags(A);
+                break;
+
+            case 0xBB: // LAS absolute,Y (SP AND memory -> A, X, SP)
+                value = readAbsoluteY();
+                A = X = SP = SP & value;
+                setZeroAndNegativeFlags(A);
+                break;
+
+            case 0xCB: // AXS/SBX (A AND X, then subtract without borrow)
+                int operand = readImmediate();
+                result = (A & X) - operand;
+                setCarry(result >= 0);
+                X = result & 0xFF;
+                setZeroAndNegativeFlags(X);
+                break;
+
+            case 0xEB: // SBC (duplicate of official 0xE9)
+                sbc(readImmediate());
+                break;
+
+            // Fucky wucky 0x9X family
+            case 0x93: // SHA (indirect),Y
+                executeUnstableStore(readIndirectAddr(), Y, A & X);
+                break;
+            case 0x9F: // SHA absolute,Y
+                executeUnstableStore(readAbsoluteAddr(), Y, A & X);
+                break;
+            case 0x9B: // TAS absolute,Y
+                SP = A & X;
+                executeUnstableStore(readAbsoluteAddr(), Y, SP);
+                break;
+            case 0x9C: // SHY absolute,X
+                executeUnstableStore(readAbsoluteAddr(), X, Y);
+                break;
+            case 0x9E: // SHX absolute,Y
+                executeUnstableStore(readAbsoluteAddr(), Y, X);
+                break;
 
             // Misc.
             case 0xEA: // NOP (no operation)
+                break;
+
+            case 0x1A, 0x3A, 0x5A, 0x7A, 0xDA, 0xFA: // NOP (implied)
+                break;
+
+            case 0x80, 0x82, 0x89, 0xC2, 0xE2: // NOP immediate (2 bytes)
+                PC++;
+                break;
+
+            case 0x04, 0x44, 0x64: // NOP zero page (2 bytes)
+                PC++;
+                break;
+
+            case 0x14, 0x34, 0x54, 0x74, 0xD4, 0xF4: // NOP zero page,X (2 bytes)
+                PC++;
+                break;
+
+            case 0x0C: // NOP absolute (3 bytes)
+                PC += 2;
+                break;
+
+            case 0x1C, 0x3C, 0x5C, 0x7C, 0xDC, 0xFC: // NOP absolute,X
+                readAbsoluteX();  // Actually performs the read (page cross timing)
                 break;
 
             default:
@@ -899,6 +1040,13 @@ public class CPU6502 {
         int high = memory.read((zpAddr + 1) & 0xFF);
         int base = (high << 8) | low;
         return (base + Y) & 0xFFFF;
+    }
+
+    private int readIndirectAddr() {
+        int zpAddr = memory.read(PC++);
+        int low = memory.read(zpAddr);
+        int high = memory.read((zpAddr + 1) & 0xFF);
+        return (high << 8) | low;
     }
 
     private int readAbsoluteAddr() {
@@ -1080,6 +1228,32 @@ public class CPU6502 {
         value = modify.apply(value);
         memory.write(addr, value);
         accumOp.accept(value);
+    }
+
+    private void executeUnstableStore(int base, int index, int value) {
+        int baseHigh = (base >> 8) & 0xFF;
+        int effectiveAddr = (base + index) & 0xFFFF;
+        int effectiveHigh = (effectiveAddr >> 8) & 0xFF;
+        int lowByte = effectiveAddr & 0xFF;
+
+        boolean pageCrossed = baseHigh != effectiveHigh;
+
+        // The AND mask is always (baseHigh + 1), applied to both value AND address
+        int andResult = value & (baseHigh + 1);
+
+        int targetAddr;
+        if (pageCrossed) {
+            // HIGH BYTE OF ADDRESS IS ALSO CORRUPTED
+            targetAddr = (andResult << 8) | lowByte;
+
+            // Dummy write at base page (wrong high byte, correct low byte)
+            int dummyAddr = (baseHigh << 8) | lowByte;
+            memory.write(dummyAddr, andResult);
+        } else {
+            targetAddr = effectiveAddr;
+        }
+
+        memory.write(targetAddr, andResult);
     }
 
     public boolean isRunning() { return running; }
