@@ -95,7 +95,23 @@ public class CPU6502 {
         // https://www.nesdev.org/obelisk-6502-guide/reference.html
         switch(opcode) {
             case 0x00: // BRK
-                running = false;
+                PC++; // BRK is technically a 2-byte instruction; skip the padding byte
+
+                // Push PC to stack (High byte first)
+                memory.write(0x0100 + SP--, (PC >> 8) & 0xFF);
+                memory.write(0x0100 + SP--, PC & 0xFF);
+
+                // Push Status Register to stack
+                // For BRK, we set the BREAK flag (bit 4) and the UNUSED flag (bit 5)
+                memory.write(0x0100 + SP--, status | FLAG_BREAK | FLAG_UNUSED);
+
+                // Set Interrupt Disable flag to prevent further IRQs
+                status |= FLAG_INTERRUPT;
+
+                // Jump to the IRQ/BRK vector at 0xFFFE/0xFFFF
+                low = memory.read(0xFFFE);
+                high = memory.read(0xFFFF);
+                PC = (high << 8) | low;
                 break;
 
             // Load / Store
