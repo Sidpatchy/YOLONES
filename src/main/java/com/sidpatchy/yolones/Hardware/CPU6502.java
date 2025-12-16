@@ -22,9 +22,9 @@ public class CPU6502 {
     private int SP;        // Stack Pointer (8-bit)
     private int status;    // Status flags
 
-    private Memory memory;
+    private CPUMemory memory;
 
-    public CPU6502(Memory mem) {
+    public CPU6502(CPUMemory mem) {
         memory = mem;
     }
 

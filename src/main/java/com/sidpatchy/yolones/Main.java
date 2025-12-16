@@ -2,7 +2,7 @@ package com.sidpatchy.yolones;
 
 import com.sidpatchy.yolones.Hardware.CPU6502;
 import com.sidpatchy.yolones.Hardware.Cartridge;
-import com.sidpatchy.yolones.Hardware.Memory;
+import com.sidpatchy.yolones.Hardware.CPUMemory;
 import com.sidpatchy.yolones.Hardware.PPU;
 import com.sidpatchy.yolones.Hardware.PPUMemory;
 import com.sidpatchy.yolones.input.ControllerHandler;
@@ -25,7 +25,7 @@ public class Main {
         PPU ppu = new PPU(ppuMemory);
 
         // 3. Create CPU memory with the cart and PPU
-        Memory memory = new Memory(cart, ppu);
+        CPUMemory memory = new CPUMemory(cart, ppu);
 
         // 4. Create CPU with memory
         CPU6502 cpu = new CPU6502(memory);

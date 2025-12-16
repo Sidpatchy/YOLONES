@@ -1,14 +1,22 @@
 package com.sidpatchy.yolones.Hardware;
 
-public class Memory {
+public class CPUMemory {
     private byte[] ram = new byte[0x0800];  // 2KB internal RAM
     private Cartridge cartridge;
     private PPU ppu;
 
-    private int controllerState = 0;
-    private int controllerShift = 0;
+    // Controller (0x4016) handling
+    // NES semantics:
+    // - Write bit0=1: strobe high; reading 0x4016 returns A button repeatedly and does NOT shift.
+    // - Transition 1->0: latch current controller state, reset index.
+    // - While strobe low: each read shifts out one bit (A, B, SELECT, START, UP, DOWN, LEFT, RIGHT).
+    //   After 8 reads, 1 is returned on subsequent reads.
+    private int controllerState = 0;   // live buttons bitmask from input
+    private int controllerShift = 0;   // latched shift register
+    private boolean controllerStrobe = false;
+    private int controllerIndex = 0;   // number of bits already read (0..8)
 
-    public Memory(Cartridge cart, PPU ppu) {
+    public CPUMemory(Cartridge cart, PPU ppu) {
         this.cartridge = cart;
         this.ppu = ppu;
     }
@@ -26,8 +34,20 @@ public class Memory {
 
         } else if (address == 0x4016) {
             // Controller 1 read
-            int value = (controllerShift & 0x01);
-            controllerShift >>= 1;
+            int value;
+            if (controllerStrobe) {
+                // While strobe is high, always return current A button state (bit0)
+                value = controllerState & 0x01;
+            } else {
+                if (controllerIndex < 8) {
+                    value = controllerShift & 0x01;
+                    controllerShift >>= 1;
+                    controllerIndex++;
+                } else {
+                    // After 8 reads, return 1
+                    value = 1;
+                }
+            }
             return value | 0x40;
 
         } else if (address == 0x4017) {
@@ -58,9 +78,13 @@ public class Memory {
 
         } else if (address == 0x4016) {
             // Controller strobe
-            if ((value & 0x01) != 0) {
+            boolean newStrobe = (value & 0x01) != 0;
+            // On 1->0 transition, latch the controller state
+            if (controllerStrobe && !newStrobe) {
                 controllerShift = controllerState;
+                controllerIndex = 0;
             }
+            controllerStrobe = newStrobe;
 
         } else if (address == 0x4014) {
             // OAM DMA: copy 256 bytes from CPU page (value << 8) to PPU OAM

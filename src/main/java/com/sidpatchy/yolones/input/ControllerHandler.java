@@ -1,6 +1,6 @@
 package com.sidpatchy.yolones.input;
 
-import com.sidpatchy.yolones.Hardware.Memory;
+import com.sidpatchy.yolones.Hardware.CPUMemory;
 
 import java.awt.*;
 
@@ -8,11 +8,11 @@ import java.awt.*;
  * Manages the active controller and synchronizes its state to NES memory.
  */
 public class ControllerHandler {
-    private final Memory memory;
+    private final CPUMemory memory;
     private Controller controller;
     private Component[] installedOn = new Component[0];
 
-    public ControllerHandler(Memory memory) {
+    public ControllerHandler(CPUMemory memory) {
         this.memory = memory;
     }
 
