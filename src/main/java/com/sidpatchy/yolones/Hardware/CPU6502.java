@@ -757,33 +757,59 @@ public class CPU6502 {
                 break;
 
             // Illegals
-            case 0x03: // SLO izx
-                addr = readIndexedIndirect();
-                value = memory.read(addr);
+            // SLO family (ASL + ORA)
+            case 0x07: rmwCombo(memory.read(PC++), this::aslValue, this::ora); break;
+            case 0x17: rmwCombo((memory.read(PC++) + X) & 0xFF, this::aslValue, this::ora); break;
+            case 0x0F: rmwCombo(readAbsoluteAddr(), this::aslValue, this::ora); break;
+            case 0x1F: rmwCombo(readAbsoluteXAddr(), this::aslValue, this::ora); break;
+            case 0x1B: rmwCombo((readAbsoluteAddr() + Y) & 0xFFFF, this::aslValue, this::ora); break;
+            case 0x03: rmwCombo(readIndexedIndirect(), this::aslValue, this::ora); break;
+            case 0x13: rmwCombo(readIndirectYAddr(), this::aslValue, this::ora); break;
 
-                // ASL operation
-                int carry = (value & 0x80) != 0 ? 1 : 0;
-                value = (value << 1) & 0xFF;
-                memory.write(addr, value);
+            // RLA family (ROL + AND)
+            case 0x27: rmwCombo(memory.read(PC++), this::rolValue, this::and); break;
+            case 0x37: rmwCombo((memory.read(PC++) + X) & 0xFF, this::rolValue, this::and); break;
+            case 0x2F: rmwCombo(readAbsoluteAddr(), this::rolValue, this::and); break;
+            case 0x3F: rmwCombo(readAbsoluteXAddr(), this::rolValue, this::and); break;
+            case 0x3B: rmwCombo((readAbsoluteAddr() + Y) & 0xFFFF, this::rolValue, this::and); break;
+            case 0x23: rmwCombo(readIndexedIndirect(), this::rolValue, this::and); break;
+            case 0x33: rmwCombo(readIndirectYAddr(), this::rolValue, this::and); break;
 
-                // ORA with accumulator
-                A |= value;
+            // SRE family (LSR + EOR)
+            case 0x47: rmwCombo(memory.read(PC++), this::lsrValue, this::eor); break;
+            case 0x57: rmwCombo((memory.read(PC++) + X) & 0xFF, this::lsrValue, this::eor); break;
+            case 0x4F: rmwCombo(readAbsoluteAddr(), this::lsrValue, this::eor); break;
+            case 0x5F: rmwCombo(readAbsoluteXAddr(), this::lsrValue, this::eor); break;
+            case 0x5B: rmwCombo((readAbsoluteAddr() + Y) & 0xFFFF, this::lsrValue, this::eor); break;
+            case 0x43: rmwCombo(readIndexedIndirect(), this::lsrValue, this::eor); break;
+            case 0x53: rmwCombo(readIndirectYAddr(), this::lsrValue, this::eor); break;
 
-                // Set flags
-                status = (status & ~FLAG_CARRY) | (carry != 0 ? FLAG_CARRY : 0);
-                setZeroAndNegativeFlags(A);
-                break;
-            case 0xFF: // ISC abx
-                addr = readAbsoluteXAddr();
-                value = memory.read(addr);
+            // RRA family (ROR + ADC)
+            case 0x67: rmwCombo(memory.read(PC++), this::rorValue, this::adc); break;
+            case 0x77: rmwCombo((memory.read(PC++) + X) & 0xFF, this::rorValue, this::adc); break;
+            case 0x6F: rmwCombo(readAbsoluteAddr(), this::rorValue, this::adc); break;
+            case 0x7F: rmwCombo(readAbsoluteXAddr(), this::rorValue, this::adc); break;
+            case 0x7B: rmwCombo((readAbsoluteAddr() + Y) & 0xFFFF, this::rorValue, this::adc); break;
+            case 0x63: rmwCombo(readIndexedIndirect(), this::rorValue, this::adc); break;
+            case 0x73: rmwCombo(readIndirectYAddr(), this::rorValue, this::adc); break;
 
-                // INC operation
-                value = (value + 1) & 0xFF;
-                memory.write(addr, value);
+            // DCP family (DEC + CMP)
+            case 0xC7: rmwCombo(memory.read(PC++), this::decValue, v -> cmp(A, v)); break;
+            case 0xD7: rmwCombo((memory.read(PC++) + X) & 0xFF, this::decValue, v -> cmp(A, v)); break;
+            case 0xCF: rmwCombo(readAbsoluteAddr(), this::decValue, v -> cmp(A, v)); break;
+            case 0xDF: rmwCombo(readAbsoluteXAddr(), this::decValue, v -> cmp(A, v)); break;
+            case 0xDB: rmwCombo((readAbsoluteAddr() + Y) & 0xFFFF, this::decValue, v -> cmp(A, v)); break;
+            case 0xC3: rmwCombo(readIndexedIndirect(), this::decValue, v -> cmp(A, v)); break;
+            case 0xD3: rmwCombo(readIndirectYAddr(), this::decValue, v -> cmp(A, v)); break;
 
-                // SBC operation
-                sbc(value);
-                break;
+            // ISC family (INC + SBC)
+            case 0xE7: rmwCombo(memory.read(PC++), this::incValue, this::sbc); break;
+            case 0xF7: rmwCombo((memory.read(PC++) + X) & 0xFF, this::incValue, this::sbc); break;
+            case 0xEF: rmwCombo(readAbsoluteAddr(), this::incValue, this::sbc); break;
+            case 0xFF: rmwCombo(readAbsoluteXAddr(), this::incValue, this::sbc); break;
+            case 0xFB: rmwCombo((readAbsoluteAddr() + Y) & 0xFFFF, this::incValue, this::sbc); break;
+            case 0xE3: rmwCombo(readIndexedIndirect(), this::incValue, this::sbc); break;
+            case 0xF3: rmwCombo(readIndirectYAddr(), this::incValue, this::sbc); break;
 
 
             // Misc.
@@ -865,6 +891,14 @@ public class CPU6502 {
         int base = (high << 8) | low;
         int addr = (base + Y) & 0xFFFF;
         return memory.read(addr);
+    }
+
+    private int readIndirectYAddr() {
+        int zpAddr = memory.read(PC++);
+        int low = memory.read(zpAddr);
+        int high = memory.read((zpAddr + 1) & 0xFF);
+        int base = (high << 8) | low;
+        return (base + Y) & 0xFFFF;
     }
 
     private int readAbsoluteAddr() {
@@ -991,6 +1025,61 @@ public class CPU6502 {
         int value = (memory.read(addr) - 1) & 0xFF;
         memory.write(addr, value);
         setZeroAndNegativeFlags(value);
+    }
+
+    private void ora(int value) {
+        A |= value;
+        setZeroAndNegativeFlags(A);
+    }
+
+    private void and(int value) {
+        A &= value;
+        setZeroAndNegativeFlags(A);
+    }
+
+    private void eor(int value) {
+        A ^= value;
+        setZeroAndNegativeFlags(A);
+    }
+
+    // Modified versions that return values for chaining
+    private int aslValue(int value) {
+        setCarry((value & 0x80) != 0);
+        return (value << 1) & 0xFF;
+    }
+
+    private int lsrValue(int value) {
+        setCarry((value & 0x01) != 0);
+        return (value >> 1) & 0x7F;
+    }
+
+    private int rolValue(int value) {
+        boolean oldCarry = getCarry();
+        setCarry((value & 0x80) != 0);
+        return ((value << 1) | (oldCarry ? 1 : 0)) & 0xFF;
+    }
+
+    private int rorValue(int value) {
+        boolean oldCarry = getCarry();
+        setCarry((value & 0x01) != 0);
+        return ((value >> 1) | (oldCarry ? 0x80 : 0)) & 0xFF;
+    }
+
+    private int incValue(int value) {
+        return (value + 1) & 0xFF;
+    }
+
+    private int decValue(int value) {
+        return (value - 1) & 0xFF;
+    }
+
+    // Generic RMW combo helper
+    private void rmwCombo(int addr, java.util.function.UnaryOperator<Integer> modify,
+                          java.util.function.Consumer<Integer> accumOp) {
+        int value = memory.read(addr);
+        value = modify.apply(value);
+        memory.write(addr, value);
+        accumOp.accept(value);
     }
 
     public boolean isRunning() { return running; }
