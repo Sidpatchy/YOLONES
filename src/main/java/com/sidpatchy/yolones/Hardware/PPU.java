@@ -208,7 +208,7 @@ public class PPU {
                 int attrAddr = nametableBase + 0x3C0 + (tileY / 4) * 8 + (tileX / 4);
                 int attrByte = memory.read(attrAddr);
                 int quadrant = ((tileY & 0x02) << 1) | (tileX & 0x02);
-                int shift = quadrant * 2;
+                int shift = quadrant;
                 int paletteIndex = (attrByte >> shift) & 0x03;
 
                 int tileAddr = bgPatternBase + tileIndex * 16;
