@@ -4,6 +4,7 @@ public class CPUMemory {
     private byte[] ram = new byte[0x0800];  // 2KB internal RAM
     private Cartridge cartridge;
     private PPU ppu;
+    private APU apu;
 
     // Controller (0x4016) handling
     // NES semantics:
@@ -16,9 +17,10 @@ public class CPUMemory {
     private boolean controllerStrobe = false;
     private int controllerIndex = 0;   // number of bits already read (0..8)
 
-    public CPUMemory(Cartridge cart, PPU ppu) {
+    public CPUMemory(Cartridge cart, PPU ppu, APU apu) {
         this.cartridge = cart;
         this.ppu = ppu;
+        this.apu = apu;
     }
 
     public int read(int address) {
@@ -56,7 +58,7 @@ public class CPUMemory {
 
         } else if (address < 0x4020) {
             // APU and I/O registers
-            return 0;
+            return apu.readRegister(address);
 
         } else {
             // Cartridge space (0x4020-0xFFFF)
@@ -97,6 +99,7 @@ public class CPUMemory {
 
         } else if (address < 0x4020) {
             // APU and I/O registers
+            apu.writeRegister(address, value);
 
         } else {
             // Cartridge space (might have RAM)
