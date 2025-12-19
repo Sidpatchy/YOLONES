@@ -1,5 +1,6 @@
 package com.sidpatchy.yolones.Hardware;
 
+import com.sidpatchy.yolones.Hardware.Mappers.Mapper;
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
 
@@ -13,7 +14,8 @@ public class PPU {
     private int ppuMask = 0;      // 0x2001
     private int ppuStatus = 0;    // 0x2002
     private int oamAddr = 0;      // 0x2003
-    private int ppuScroll = 0;    // 0x2005
+    private int scrollX = 0;      // 0x2005 (1st write)
+    private int scrollY = 0;      // 0x2005 (2nd write)
     private int ppuAddr = 0;      // 0x2006
     private int ppuData = 0;      // 0x2007
 
@@ -27,6 +29,7 @@ public class PPU {
     // Timing
     private int scanline = 0;
     private int cycle = 0;
+    private Mapper mapper;
 
     // NES color palette (all 64 colors)
     private static final int[] NES_PALETTE = {
@@ -40,8 +43,9 @@ public class PPU {
             0xE4E594, 0xCFEF96, 0xBDF4AB, 0xB3F3CC, 0xB5EBF2, 0xB8B8B8, 0x000000, 0x000000
     };
 
-    public PPU(PPUMemory mem) {
+    public PPU(PPUMemory mem, Mapper mapper) {
         this.memory = mem;
+        this.mapper = mapper;
     }
 
     // Called by CPU memory when accessing 0x2000-0x2007
@@ -97,7 +101,11 @@ public class PPU {
                 break;
 
             case 0x2005:  // PPUSCROLL
-                // TODO: implement scrolling properly
+                if (!addrLatch) {
+                    scrollX = value;
+                } else {
+                    scrollY = value;
+                }
                 addrLatch = !addrLatch;
                 break;
 
@@ -124,9 +132,21 @@ public class PPU {
     public boolean tick() {
         cycle++;
 
+        if (cycle == 260) {
+            if (scanline < 240 || scanline == 261) {
+                if ((ppuMask & 0x18) != 0) {
+                    mapper.clockIRQ();
+                }
+            }
+        }
+
         if (cycle >= 341) {
             cycle = 0;
             scanline++;
+
+            if (scanline < 240) {
+                renderScanline(scanline);
+            }
 
             if (scanline == 241) {
                 ppuStatus |= 0x80;  // Set VBlank flag
@@ -142,7 +162,6 @@ public class PPU {
                 // End of frame
                 scanline = 0;
                 ppuStatus &= 0x7F;  // Clear VBlank flag
-                render();  // Draw the frame
                 // After rendering, reset OAMADDR to 0 as many games expect
                 oamAddr = 0;
             }
@@ -151,70 +170,105 @@ public class PPU {
         return false;  // No NMI
     }
 
-    private void render() {
-        // Only render if rendering is enabled
-        if ((ppuMask & 0x18) == 0) {
-            return;  // Rendering disabled
+    private void renderScanline(int y) {
+        // Clear background with universal background color first if rendering is enabled
+        int universalColor = NES_PALETTE[memory.read(0x3F00) & 0x3F];
+        if ((ppuMask & 0x18) != 0) {
+            for (int x = 0; x < 256; x++) framebuffer[y * 256 + x] = universalColor;
         }
 
-        logger.debug("Rendering frame");
+        if ((ppuMask & 0x18) == 0) return; // Rendering disabled
 
-        // Clear framebuffer to universal background color (optional, ensures fully transparent backgrounds look right)
-        int universalColor = NES_PALETTE[memory.read(0x3F00) & 0x3F];
-        for (int i = 0; i < framebuffer.length; i++) framebuffer[i] = universalColor;
-
-        // Render background
-        int nametableBase = 0x2000 + ((ppuCtrl & 0x03) * 0x400);
         int bgPatternBase = ((ppuCtrl & 0x10) != 0) ? 0x1000 : 0x0000;
+        int spritePatternBase = ((ppuCtrl & 0x08) != 0) ? 0x1000 : 0x0000;
+        boolean sprites8x16 = (ppuCtrl & 0x20) != 0;
 
-        for (int tileY = 0; tileY < 30; tileY++) {
-            for (int tileX = 0; tileX < 32; tileX++) {
+        // Simplified background rendering for the scanline
+        // This still doesn't handle horizontal scroll perfectly but it's better than full frame
+        if ((ppuMask & 0x08) != 0) {
+            for (int x = 0; x < 256; x++) {
+                int realX = x + scrollX;
+                int realY = y + scrollY;
+                int ntIndex = (ppuCtrl & 0x03);
+                if (realX >= 256) {
+                    ntIndex ^= 0x01;
+                    realX %= 256;
+                }
+                if (realY >= 240) {
+                    ntIndex ^= 0x02;
+                    realY %= 240;
+                }
+                int nametableBase = 0x2000 + ntIndex * 0x400;
+
+                int tileX = realX / 8;
+                int tileY = realY / 8;
                 int tileIndex = memory.read(nametableBase + tileY * 32 + tileX);
 
-                // Get attribute byte (which palette to use)
                 int attrAddr = nametableBase + 0x3C0 + (tileY / 4) * 8 + (tileX / 4);
                 int attrByte = memory.read(attrAddr);
-
-                // Correct attribute quadrant selection: bits are grouped per 2x2 tile block
-                int quadrant = ((tileY & 0x02) << 1) | (tileX & 0x02); // 0,2,4,6
+                int quadrant = ((tileY & 0x02) << 1) | (tileX & 0x02);
                 int shift = (quadrant == 0 ? 0 : quadrant == 2 ? 2 : quadrant == 4 ? 4 : 6);
                 int paletteIndex = (attrByte >> shift) & 0x03;
 
-                drawBgTile(tileX * 8, tileY * 8, tileIndex, paletteIndex, bgPatternBase);
+                int tileAddr = bgPatternBase + tileIndex * 16;
+                int row = realY % 8;
+                int lowByte = memory.read(tileAddr + row);
+                int highByte = memory.read(tileAddr + row + 8);
+                int col = realX % 8;
+                int bit0 = (lowByte >> (7 - col)) & 1;
+                int bit1 = (highByte >> (7 - col)) & 1;
+                int colorIndex = (bit1 << 1) | bit0;
+
+                if (colorIndex != 0) {
+                    int paletteAddr = 0x3F00 + paletteIndex * 4 + colorIndex;
+                    framebuffer[y * 256 + x] = NES_PALETTE[memory.read(paletteAddr) & 0x3F];
+                } else {
+                    int universalColorAddr = 0x3F00;
+                    framebuffer[y * 256 + x] = NES_PALETTE[memory.read(universalColorAddr) & 0x3F];
+                }
             }
         }
 
-        // Render sprites (8x8 and 8x16)
-        if ((ppuMask & 0x10) != 0) { // sprites enabled
-            boolean sprites8x16 = (ppuCtrl & 0x20) != 0;
-            int spritePatternBase = ((ppuCtrl & 0x08) != 0) ? 0x1000 : 0x0000; // used only for 8x8 mode
+        // Render sprites for this scanline
+        if ((ppuMask & 0x10) != 0) {
             for (int i = 0; i < 64; i++) {
-                int y = oam[i * 4] & 0xFF;
+                int spriteY = (oam[i * 4] & 0xFF);
+                if (y < spriteY || y >= spriteY + (sprites8x16 ? 16 : 8)) continue;
+
                 int tile = oam[i * 4 + 1] & 0xFF;
                 int attr = oam[i * 4 + 2] & 0xFF;
-                int x = oam[i * 4 + 3] & 0xFF;
-
-                int palette = attr & 0x03;       // sprite palette 0-3
-                boolean priorityBehindBg = (attr & 0x20) != 0; // if true, draw behind bg nonzero pixels (approximate)
+                int spriteX = oam[i * 4 + 3] & 0xFF;
+                int palette = attr & 0x03;
                 boolean flipH = (attr & 0x40) != 0;
                 boolean flipV = (attr & 0x80) != 0;
 
-                if (!sprites8x16) {
-                    drawSprite8x8(x, y + 1, tile, palette, spritePatternBase, flipH, flipV, priorityBehindBg);
-                } else {
-                    // 8x16 mode: pattern table depends on tile bit0; tile number even selects top tile index
-                    int baseTable = (tile & 1) != 0 ? 0x1000 : 0x0000;
-                    int topTile = tile & 0xFE;
-                    int bottomTile = topTile + 1;
+                int row = y - spriteY;
+                if (flipV) row = (sprites8x16 ? 15 : 7) - row;
 
-                    // If vertically flipped, swap drawing order and flipV applied to each 8x8
-                    if (!flipV) {
-                        drawSprite8x8(x, y + 1, topTile, palette, baseTable, flipH, false, priorityBehindBg);
-                        drawSprite8x8(x, y + 9, bottomTile, palette, baseTable, flipH, false, priorityBehindBg);
-                    } else {
-                        // When V flipped, top/bottom are swapped and rows flipped inside each tile
-                        drawSprite8x8(x, y + 1, bottomTile, palette, baseTable, flipH, true, priorityBehindBg);
-                        drawSprite8x8(x, y + 9, topTile, palette, baseTable, flipH, true, priorityBehindBg);
+                int tileAddr;
+                if (!sprites8x16) {
+                    tileAddr = spritePatternBase + tile * 16 + row;
+                } else {
+                    int baseTable = (tile & 1) != 0 ? 0x1000 : 0x0000;
+                    int actualTile = (tile & 0xFE) + (row / 8);
+                    tileAddr = baseTable + actualTile * 16 + (row % 8);
+                }
+
+                int lowByte = memory.read(tileAddr);
+                int highByte = memory.read(tileAddr + 8);
+
+                for (int col = 0; col < 8; col++) {
+                    int x = spriteX + col;
+                    if (x >= 256) continue;
+
+                    int pixelCol = flipH ? col : 7 - col;
+                    int bit0 = (lowByte >> pixelCol) & 1;
+                    int bit1 = (highByte >> pixelCol) & 1;
+                    int colorIndex = (bit1 << 1) | bit0;
+
+                    if (colorIndex != 0) {
+                        int paletteAddr = 0x3F10 + palette * 4 + colorIndex;
+                        framebuffer[y * 256 + x] = NES_PALETTE[memory.read(paletteAddr) & 0x3F];
                     }
                 }
             }

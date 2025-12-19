@@ -29,6 +29,7 @@ public class CPU6502 {
     }
 
     public void step() {
+        PC &= 0xFFFF;
         int opcode = memory.read(PC);
 
         if (logger.isTraceEnabled()) {
@@ -78,6 +79,25 @@ public class CPU6502 {
         // Jump to NMI vector at 0xFFFA/0xFFFB
         int low = memory.read(0xFFFA);
         int high = memory.read(0xFFFB);
+        PC = (high << 8) | low;
+    }
+
+    public void triggerIRQ() {
+        if ((status & FLAG_INTERRUPT) != 0) return;
+
+        // Push PC (high byte first)
+        memory.write(0x0100 + SP--, (PC >> 8) & 0xFF);
+        memory.write(0x0100 + SP--, PC & 0xFF);
+
+        // Push status (without break flag, with unused flag set)
+        memory.write(0x0100 + SP--, (status & ~FLAG_BREAK) | FLAG_UNUSED);
+
+        // Set interrupt disable flag
+        status |= FLAG_INTERRUPT;
+
+        // Jump to IRQ vector at 0xFFFE/0xFFFF
+        int low = memory.read(0xFFFE);
+        int high = memory.read(0xFFFF);
         PC = (high << 8) | low;
     }
 
@@ -959,7 +979,7 @@ public class CPU6502 {
 
             default:
                 logger.error(String.format("Unknown opcode: 0x%02X at PC: 0x%04X", opcode, PC - 1));
-                running = false;  // Halt on unknown opcode
+                // running = false;  // Don't halt, just log it. Some games might recover or it might be a transient banking issue.
                 break;
         }
     }

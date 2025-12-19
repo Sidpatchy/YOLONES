@@ -21,8 +21,8 @@ public class Main {
         //Cartridge cart = new Cartridge("/var/home/osprey/Games/ROMs/NES Games/Super Mario Bros. (World).nes");
 
         // 2. Create PPU memory and PPU
-        PPUMemory ppuMemory = new PPUMemory(cart.getChrROM(), cart.isMirrorVertical());
-        PPU ppu = new PPU(ppuMemory);
+        PPUMemory ppuMemory = new PPUMemory(cart.getMapper(), cart.isMirrorVertical());
+        PPU ppu = new PPU(ppuMemory, cart.getMapper());
 
         // 3. Create CPU memory with the cart and PPU
         CPUMemory memory = new CPUMemory(cart, ppu);
@@ -46,6 +46,10 @@ public class Main {
         cpu.reset();
 
         // 7. Run the emulation loop
+        final double TARGET_FPS = 60.098;
+        final long NS_PER_FRAME = (long) (1_000_000_000 / TARGET_FPS);
+        long lastFrameTime = System.nanoTime();
+
         while (cpu.isRunning()) {
             // Update input state
             controllerHandler.update();
@@ -58,9 +62,33 @@ public class Main {
                 }
             }
 
+            if (cart.getMapper().hasIRQ()) {
+                cpu.triggerIRQ();
+            }
+
             if (ppu.getScanline() == 0 && ppu.getCycle() == 0) {
                 logger.info("Frame complete, updating display");
                 renderer.updateFrame(ppu.getFramebuffer());
+
+                // Sync to frame rate
+                long currentTime = System.nanoTime();
+                long elapsedTime = currentTime - lastFrameTime;
+                long sleepTimeNs = NS_PER_FRAME - elapsedTime;
+
+                if (sleepTimeNs > 0) {
+                    // Sleep for the millisecond part
+                    long millis = sleepTimeNs / 1_000_000;
+                    int nanos = (int) (sleepTimeNs % 1_000_000);
+                    if (millis > 0) {
+                        Thread.sleep(millis);
+                    }
+                    // Busy-wait for the remaining nanoseconds for higher precision
+                    long wakeTime = lastFrameTime + NS_PER_FRAME;
+                    while (System.nanoTime() < wakeTime) {
+                        // Busy wait
+                    }
+                }
+                lastFrameTime = System.nanoTime();
             }
         }
     }

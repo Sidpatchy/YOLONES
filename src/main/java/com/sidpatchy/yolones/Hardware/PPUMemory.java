@@ -1,14 +1,16 @@
 package com.sidpatchy.yolones.Hardware;
 
+import com.sidpatchy.yolones.Hardware.Mappers.Mapper;
+
 public class PPUMemory {
     // 2KB of nametable RAM (physically two 1KB tables; mapped via mirroring)
     private final int[] nametableRAM = new int[0x800];
     private final int[] paletteRAM = new int[32];    // Palette memory
-    private final byte[] chrROM;                     // Pattern tables (from cartridge)
+    private final Mapper mapper;
     private final boolean mirrorVertical;            // True: vertical, False: horizontal
 
-    public PPUMemory(byte[] chrData, boolean mirrorVertical) {
-        this.chrROM = (chrData != null ? chrData : new byte[0]);
+    public PPUMemory(Mapper mapper, boolean mirrorVertical) {
+        this.mapper = mapper;
         this.mirrorVertical = mirrorVertical;
     }
 
@@ -24,7 +26,10 @@ public class PPUMemory {
 
         // Map 4 logical tables to 2 physical tables based on mirroring
         int physicalTable;
-        if (mirrorVertical) {
+        int mMode = mapper.getMirroringMode();
+        boolean effectiveVertical = (mMode == -1) ? mirrorVertical : (mMode == 0);
+
+        if (effectiveVertical) {
             // Vertical: NT0=phys0, NT1=phys1, NT2=phys0, NT3=phys1
             physicalTable = (tableIndex & 1);
         } else {
@@ -38,10 +43,8 @@ public class PPUMemory {
         addr &= 0x3FFF;  // Mirror to 14-bit address space
 
         if (addr < 0x2000) {
-            // Pattern tables (CHR-ROM or CHR-RAM)
-            if (chrROM.length == 0) return 0; // No CHR; return 0 for safety
-            int index = addr % chrROM.length; // robust for any length
-            return chrROM[index] & 0xFF;
+            // Pattern tables (CHR-ROM or CHR-RAM) via Mapper
+            return mapper.chrRead(addr);
         } else if (addr < 0x3F00) {
             // Nametables with proper mirroring, including 0x3000-0x3EFF mirror handled in mapper
             int ntIndex = mapNametableAddress(addr);
@@ -62,11 +65,8 @@ public class PPUMemory {
         value &= 0xFF;
 
         if (addr < 0x2000) {
-            // CHR-ROM is read-only. If this cart had CHR-RAM, we'd allow writes.
-            if (chrROM.length == 0) {
-                // If no CHR ROM provided, treat as CHR-RAM (8KB)
-                // For minimalism, ignore writes since cart implementation didn't expose CHR-RAM.
-            }
+            // Pattern tables via Mapper
+            mapper.chrWrite(addr, value);
         } else if (addr < 0x3F00) {
             // Nametables with mirroring
             int ntIndex = mapNametableAddress(addr);
