@@ -9,7 +9,7 @@ a bit better.
 
 Controls:
 - D-Pad: W/A/S/D = Up/Left/Down/Right
-- A button: X
-- B button: Z
+- A button: Period
+- B button: Comma
 - Start: Enter
 - Select: Shift (either)

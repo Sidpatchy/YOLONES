@@ -40,8 +40,8 @@ public class KeyboardController implements Controller, KeyListener {
         map.put(KeyEvent.VK_A, Button.LEFT);
         map.put(KeyEvent.VK_D, Button.RIGHT);
 
-        map.put(KeyEvent.VK_X, Button.A);
-        map.put(KeyEvent.VK_Z, Button.B);
+        map.put(KeyEvent.VK_PERIOD, Button.A);
+        map.put(KeyEvent.VK_COMMA, Button.B);
 
         map.put(KeyEvent.VK_ENTER, Button.START);
         map.put(KeyEvent.VK_SHIFT, Button.SELECT); // Any Shift
