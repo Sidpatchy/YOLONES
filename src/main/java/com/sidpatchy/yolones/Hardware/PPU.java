@@ -14,17 +14,19 @@ public class PPU {
     private int ppuMask = 0;      // 0x2001
     private int ppuStatus = 0;    // 0x2002
     private int oamAddr = 0;      // 0x2003
-    private int scrollX = 0;      // 0x2005 (1st write)
-    private int scrollY = 0;      // 0x2005 (2nd write)
-    private int ppuAddr = 0;      // 0x2006
     private int ppuData = 0;      // 0x2007
+
+    // Internal Loopy Registers
+    private int v = 0; // Current VRAM address (15 bits)
+    private int t = 0; // Temporary VRAM address (15 bits)
+    private int x = 0; // Fine X scroll (3 bits)
+    private boolean w = false; // Write latch
 
     // OAM (Object Attribute Memory) for sprites
     private int[] oam = new int[256];
     private int[] bgPixels = new int[256]; // 0: transparent, 1: opaque
 
     // Internal state
-    private boolean addrLatch = false;  // Toggle for 0x2005/0x2006
     private int readBuffer = 0;         // Buffered read
 
     // Timing
@@ -51,23 +53,26 @@ public class PPU {
 
     // Called by CPU memory when accessing 0x2000-0x2007
     public int readRegister(int addr) {
-        switch(addr & 0x2007) {
-            case 0x2002:  // PPUSTATUS
+        switch(addr & 0x0007) {
+            case 0x0002:  // PPUSTATUS
                 int status = ppuStatus;
                 ppuStatus &= 0x7F;  // Clear VBlank flag
-                addrLatch = false;   // Reset address latch
+                w = false;          // Reset address latch
                 return status;
 
-            case 0x2007:  // PPUDATA
+            case 0x0004:  // OAMDATA
+                return oam[oamAddr & 0xFF];
+
+            case 0x0007:  // PPUDATA
                 int data = readBuffer;
-                readBuffer = memory.read(ppuAddr);
+                readBuffer = memory.read(v & 0x3FFF);
 
                 // Palette reads are immediate (not buffered)
-                if (ppuAddr >= 0x3F00) {
+                if ((v & 0x3FFF) >= 0x3F00) {
                     data = readBuffer;
                 }
 
-                ppuAddr = (ppuAddr + ((ppuCtrl & 0x04) != 0 ? 32 : 1)) & 0x3FFF;
+                v = (v + ((ppuCtrl & 0x04) != 0 ? 32 : 1)) & 0x7FFF;
                 return data;
 
             default:
@@ -78,97 +83,135 @@ public class PPU {
     public void writeRegister(int addr, int value) {
         value &= 0xFF;
 
-        switch(addr & 0x2007) {
-            case 0x2000:  // PPUCTRL
-                logger.debug(String.format("PPUCTRL write: 0x%02X (NMI enable: %b)",
-                        value, (value & 0x80) != 0));
+        switch(addr & 0x0007) {
+            case 0x0000:  // PPUCTRL
                 ppuCtrl = value;
+                // t: ...GH.. ........ = d: ......GH
+                t = (t & 0xF3FF) | ((value & 0x03) << 10);
                 break;
 
-            case 0x2001:  // PPUMASK
-                logger.debug(String.format("PPUMASK write: 0x%02X (bg=%b, sprites=%b)",
-                        value, (value & 0x08) != 0, (value & 0x10) != 0));
+            case 0x0001:  // PPUMASK
                 ppuMask = value;
                 break;
 
-            case 0x2003:  // OAMADDR
+            case 0x0003:  // OAMADDR
                 oamAddr = value & 0xFF;
                 break;
 
-            case 0x2004:  // OAMDATA (write)
+            case 0x0004:  // OAMDATA (write)
                 // Write to OAM at current address, auto-increment
                 oam[oamAddr & 0xFF] = value & 0xFF;
                 oamAddr = (oamAddr + 1) & 0xFF;
                 break;
 
-            case 0x2005:  // PPUSCROLL
-                if (!addrLatch) {
-                    scrollX = value;
+            case 0x0005:  // PPUSCROLL
+                if (!w) {
+                    // t: ....... ...ABCDE = d: ABCDE...
+                    // x:              FGH = d: .....FGH
+                    // w:                  = 1
+                    t = (t & 0xFFE0) | (value >> 3);
+                    x = value & 0x07;
+                    w = true;
                 } else {
-                    scrollY = value;
+                    // t: FGH..AB CDE..... = d: ABCDE FGH
+                    // w:                  = 0
+                    t = (t & 0x8C1F) | ((value & 0x07) << 12) | ((value & 0xF8) << 2);
+                    w = false;
                 }
-                addrLatch = !addrLatch;
                 break;
 
-            case 0x2006:  // PPUADDR
-                if (!addrLatch) {
-                    ppuAddr = (value << 8) | (ppuAddr & 0xFF);
+            case 0x0006:  // PPUADDR
+                if (!w) {
+                    // t: .ABCDEF GH...... = d: ..ABCDEF
+                    // t: H...... ........ = 0
+                    // w:                  = 1
+                    t = (t & 0x00FF) | ((value & 0x3F) << 8);
+                    w = true;
                 } else {
-                    ppuAddr = (ppuAddr & 0xFF00) | value;
+                    // t: ....... ABCDEFGH = d: ABCDEFGH
+                    // v:                  = t
+                    // w:                  = 0
+                    t = (t & 0xFF00) | value;
+                    v = t;
+                    w = false;
                 }
-                addrLatch = !addrLatch;
                 break;
 
-            case 0x2007:  // PPUDATA
-                if (ppuAddr >= 0x3F00 && ppuAddr < 0x3F20) {
-                    logger.trace(String.format("Palette[0x%02X] = 0x%02X", ppuAddr & 0x1F, value));
-                }
-                memory.write(ppuAddr, value);
-                ppuAddr = (ppuAddr + ((ppuCtrl & 0x04) != 0 ? 32 : 1)) & 0x3FFF;
+            case 0x0007:  // PPUDATA
+                memory.write(v & 0x3FFF, value);
+                v = (v + ((ppuCtrl & 0x04) != 0 ? 32 : 1)) & 0x7FFF;
                 break;
         }
     }
 
     // Called every PPU cycle
     public boolean tick() {
+        if ((ppuMask & 0x18) != 0) {
+            if (cycle == 257 && (scanline < 240 || scanline == 261)) {
+                // Copy all bits related to horizontal position from t to v
+                v = (v & 0xFBE0) | (t & 0x041F);
+            }
+
+            if (scanline == 261 && cycle >= 280 && cycle <= 304) {
+                // Copy all bits related to vertical position from t to v
+                v = (v & 0x841F) | (t & 0x7BE0);
+            }
+        }
+
         cycle++;
 
-        if (cycle == 260) {
-            if (scanline < 240 || scanline == 261) {
-                if ((ppuMask & 0x18) != 0) {
-                    mapper.clockIRQ();
-                }
-            }
+        if (cycle == 260 && (scanline < 240 || scanline == 261) && (ppuMask & 0x18) != 0) {
+            mapper.clockIRQ();
         }
 
         if (cycle >= 341) {
             cycle = 0;
-            scanline++;
-
+            
             if (scanline < 240) {
                 renderScanline(scanline);
+                if ((ppuMask & 0x18) != 0) {
+                    incrementY();
+                }
             }
+
+            scanline++;
 
             if (scanline == 241) {
                 ppuStatus |= 0x80;  // Set VBlank flag
-                logger.debug(String.format("Scanline 241 (VBlank): PPUCTRL=0x%02X, NMI will fire=%b",
-                        ppuCtrl, (ppuCtrl & 0x80) != 0));
-
                 if ((ppuCtrl & 0x80) != 0) {
                     return true;  // Trigger NMI
                 }
             }
 
+            if (scanline == 261) {
+                ppuStatus &= 0x1F; // Clear VBlank, Sprite 0 hit, and Sprite Overflow
+            }
+
             if (scanline >= 262) {
-                // End of frame
                 scanline = 0;
-                ppuStatus &= 0x3F;  // Clear VBlank and Sprite 0 hit flags
-                // After rendering, reset OAMADDR to 0 as many games expect
                 oamAddr = 0;
             }
         }
 
         return false;  // No NMI
+    }
+
+    private void incrementY() {
+        if ((v & 0x7000) != 0x7000) {
+            v += 0x1000;
+        } else {
+            v &= 0x0FFF;
+            int y = (v & 0x03E0) >> 5;
+            if (y == 29) {
+                y = 0;
+                v ^= 0x0800;
+            } else if (y == 31) {
+                y = 0;
+            } else {
+                y++;
+            }
+            v = (v & 0xFC1F) | (y << 5);
+        }
     }
 
     private void renderScanline(int y) {
@@ -187,43 +230,50 @@ public class PPU {
 
         // Simplified background rendering for the scanline
         if ((ppuMask & 0x08) != 0) {
-            for (int x = 0; x < 256; x++) {
-                int realX = x + scrollX;
-                int realY = y + scrollY;
-                int ntIndex = (ppuCtrl & 0x03);
-                if (realX >= 256) {
-                    ntIndex ^= 0x01;
-                    realX %= 256;
+            // Start of scanline: copy horizontal bits from v to a local register for rendering
+            int tempV = v;
+
+            for (int dot = 0; dot < 256; dot++) {
+                int fineX = (x + dot) % 8;
+                if (dot > 0 && fineX == 0) {
+                    // Increment coarse X in tempV
+                    if ((tempV & 0x001F) == 31) {
+                        tempV &= 0xFFE0;
+                        tempV ^= 0x0400;
+                    } else {
+                        tempV++;
+                    }
                 }
-                if (realY >= 240) {
-                    ntIndex ^= 0x02;
-                    realY %= 240;
-                }
+
+                int ntAddr = 0x2000 | (tempV & 0x0FFF);
+                int tileIndex = memory.read(ntAddr);
+
+                int coarseX = tempV & 0x001F;
+                int coarseY = (tempV & 0x03E0) >> 5;
+                int ntIndex = (tempV & 0x0C00) >> 10;
                 int nametableBase = 0x2000 + ntIndex * 0x400;
 
-                int tileX = realX / 8;
-                int tileY = realY / 8;
-                int tileIndex = memory.read(nametableBase + tileY * 32 + tileX);
-
-                int attrAddr = nametableBase + 0x3C0 + (tileY / 4) * 8 + (tileX / 4);
+                int attrAddr = nametableBase + 0x3C0 + (coarseY / 4) * 8 + (coarseX / 4);
                 int attrByte = memory.read(attrAddr);
-                int quadrant = ((tileY & 0x02) << 1) | (tileX & 0x02);
-                int shift = quadrant;
+                int quadrant = ((coarseY % 4) / 2) * 2 + ((coarseX % 4) / 2);
+                int shift = quadrant * 2;
                 int paletteIndex = (attrByte >> shift) & 0x03;
 
-                int tileAddr = bgPatternBase + tileIndex * 16;
-                int row = realY % 8;
-                int lowByte = memory.read(tileAddr + row);
-                int highByte = memory.read(tileAddr + row + 8);
-                int col = realX % 8;
-                int bit0 = (lowByte >> (7 - col)) & 1;
-                int bit1 = (highByte >> (7 - col)) & 1;
+                int fineY = (tempV >> 12) & 0x07;
+                int tileAddr = bgPatternBase + tileIndex * 16 + fineY;
+                int lowByte = memory.read(tileAddr);
+                int highByte = memory.read(tileAddr + 8);
+                
+                int bit0 = (lowByte >> (7 - fineX)) & 1;
+                int bit1 = (highByte >> (7 - fineX)) & 1;
                 int colorIndex = (bit1 << 1) | bit0;
 
                 if (colorIndex != 0) {
-                    int paletteAddr = 0x3F00 + paletteIndex * 4 + colorIndex;
-                    framebuffer[y * 256 + x] = NES_PALETTE[memory.read(paletteAddr) & 0x3F];
-                    bgPixels[x] = 1;
+                    if (dot >= 8 || (ppuMask & 0x02) != 0) {
+                        int paletteAddr = 0x3F00 + paletteIndex * 4 + colorIndex;
+                        framebuffer[y * 256 + dot] = NES_PALETTE[memory.read(paletteAddr) & 0x3F];
+                        bgPixels[dot] = 1;
+                    }
                 }
             }
         }
@@ -231,7 +281,9 @@ public class PPU {
         // Render sprites for this scanline
         if ((ppuMask & 0x10) != 0) {
             for (int i = 0; i < 64; i++) {
-                int spriteY = (oam[i * 4] & 0xFF);
+                // NES sprites are delayed by one scanline. The value in OAM is Y-1.
+                // So if OAM has Y, the sprite appears on scanlines Y+1 to Y+8.
+                int spriteY = (oam[i * 4] & 0xFF) + 1;
                 if (y < spriteY || y >= spriteY + (sprites8x16 ? 16 : 8)) continue;
 
                 int tile = oam[i * 4 + 1] & 0xFF;
@@ -247,10 +299,10 @@ public class PPU {
 
                 int tileAddr;
                 if (!sprites8x16) {
-                    tileAddr = spritePatternBase + tile * 16 + row;
+                    tileAddr = spritePatternBase + tile * 16 + (row % 8);
                 } else {
                     int baseTable = (tile & 1) != 0 ? 0x1000 : 0x0000;
-                    int actualTile = (tile & 0xFE) + (row / 8);
+                    int actualTile = (tile & 0xFE) + ((row >= 8) ? 1 : 0);
                     tileAddr = baseTable + actualTile * 16 + (row % 8);
                 }
 
@@ -269,12 +321,23 @@ public class PPU {
                     if (colorIndex != 0) {
                         // Sprite 0 hit detection
                         if (i == 0 && bgPixels[x] != 0 && x < 255) {
-                            ppuStatus |= 0x40;
+                            // Check for masking of first 8 pixels
+                            boolean bgVisible = (ppuMask & 0x08) != 0;
+                            boolean sprVisible = (ppuMask & 0x10) != 0;
+                            boolean bgLeftMasked = (x < 8) && ((ppuMask & 0x02) == 0);
+                            boolean sprLeftMasked = (x < 8) && ((ppuMask & 0x04) == 0);
+
+                            if (bgVisible && sprVisible && !bgLeftMasked && !sprLeftMasked) {
+                                ppuStatus |= 0x40;
+                            }
                         }
 
-                        if (!priority || bgPixels[x] == 0) {
-                            int paletteAddr = 0x3F10 + palette * 4 + colorIndex;
-                            framebuffer[y * 256 + x] = NES_PALETTE[memory.read(paletteAddr) & 0x3F];
+                        // Sprite rendering
+                        if (x >= 8 || (ppuMask & 0x04) != 0) {
+                            if (!priority || bgPixels[x] == 0) {
+                                int paletteAddr = 0x3F10 + palette * 4 + colorIndex;
+                                framebuffer[y * 256 + x] = NES_PALETTE[memory.read(paletteAddr) & 0x3F];
+                            }
                         }
                     }
                 }
