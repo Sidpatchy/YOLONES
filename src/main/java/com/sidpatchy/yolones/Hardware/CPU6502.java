@@ -23,12 +23,32 @@ public class CPU6502 {
     private int status;    // Status flags
 
     private CPUMemory memory;
+    private int cycles = 0;
+
+    private static final int[] OPCODE_CYCLES = {
+        7, 6, 2, 8, 3, 3, 5, 5, 3, 2, 2, 2, 4, 4, 6, 6,
+        2, 5, 2, 8, 4, 4, 6, 6, 2, 4, 2, 7, 4, 4, 7, 7,
+        6, 6, 2, 8, 3, 3, 5, 5, 4, 2, 2, 2, 4, 4, 6, 6,
+        2, 5, 2, 8, 4, 4, 6, 6, 2, 4, 2, 7, 4, 4, 7, 7,
+        6, 6, 2, 8, 3, 3, 5, 5, 3, 2, 2, 2, 3, 4, 6, 6,
+        2, 5, 2, 8, 4, 4, 6, 6, 2, 4, 2, 7, 4, 4, 7, 7,
+        6, 6, 2, 8, 3, 3, 5, 5, 4, 2, 2, 2, 5, 4, 6, 6,
+        2, 5, 2, 8, 4, 4, 6, 6, 2, 4, 2, 7, 4, 4, 7, 7,
+        2, 6, 2, 6, 3, 3, 3, 3, 2, 2, 2, 2, 4, 4, 4, 4,
+        2, 6, 2, 6, 4, 4, 4, 4, 2, 5, 2, 5, 5, 5, 5, 5,
+        2, 6, 2, 6, 3, 3, 3, 3, 2, 2, 2, 2, 4, 4, 4, 4,
+        2, 5, 2, 5, 4, 4, 4, 4, 2, 4, 2, 4, 4, 4, 4, 4,
+        2, 6, 2, 8, 3, 3, 5, 5, 2, 2, 2, 2, 4, 4, 6, 6,
+        2, 5, 2, 8, 4, 4, 6, 6, 2, 4, 2, 7, 4, 4, 7, 7,
+        2, 6, 2, 8, 3, 3, 5, 5, 2, 2, 2, 2, 4, 4, 6, 6,
+        2, 5, 2, 8, 4, 4, 6, 6, 2, 4, 2, 7, 4, 4, 7, 7
+    };
 
     public CPU6502(CPUMemory mem) {
         memory = mem;
     }
 
-    public void step() {
+    public int step() {
         PC &= 0xFFFF;
         int opcode = memory.read(PC);
 
@@ -37,8 +57,14 @@ public class CPU6502 {
                     PC, opcode, A, X, Y, status, SP));
         }
 
+        cycles = OPCODE_CYCLES[opcode];
         PC++;
         executeInstruction(opcode);
+        return cycles;
+    }
+
+    private void addCycle() {
+        cycles++;
     }
 
     public void reset() {
@@ -182,16 +208,10 @@ public class CPU6502 {
                 memory.write(addr, A);
                 break;
             case 0x9D: // STA absolute, X
-                low = memory.read(PC++);
-                high = memory.read(PC++);
-                addr = (high << 8) | low;
-                memory.write((addr + X) & 0xFFFF, A);
+                memory.write(readAbsoluteXAddr(), A);
                 break;
             case 0x99: // STA absolute, Y
-                low = memory.read(PC++);
-                high = memory.read(PC++);
-                addr = (high << 8) | low;
-                memory.write((addr + Y) & 0xFFFF, A);
+                memory.write(readAbsoluteYAddr(), A);
                 break;
             case 0x81: // STA (indirect,X)
                 zpAddr = memory.read(PC++);
@@ -202,12 +222,7 @@ public class CPU6502 {
                 memory.write(addr, A);
                 break;
             case 0x91: // STA (indirect),Y
-                zpAddr = memory.read(PC++);
-                low = memory.read(zpAddr);
-                high = memory.read((zpAddr + 1) & 0xFF);
-                addr = ((high << 8) | low);
-                addr = (addr + Y) & 0xFFFF;
-                memory.write(addr, A);
+                memory.write(readIndirectYAddr(), A);
                 break;
             case 0x8E: // STX absolute
                 low = memory.read(PC++);
@@ -410,52 +425,28 @@ public class CPU6502 {
 
             // Branches
             case 0xD0: // BNE (branch if not equal/zero flag clear)
-                offset = (byte) memory.read(PC++);  // Cast to signed byte
-                if ((status & FLAG_ZERO) == 0) {
-                    PC += offset;
-                }
+                branch((status & FLAG_ZERO) == 0);
                 break;
             case 0xF0: // BEQ (branch if equal/zero flag set)
-                offset = (byte) memory.read(PC++);  // Cast to signed byte
-                if ((status & FLAG_ZERO) != 0) {
-                    PC += offset;
-                }
+                branch((status & FLAG_ZERO) != 0);
                 break;
             case 0x10: // BPL (branch if plus/negative flag clear)
-                offset = (byte) memory.read(PC++);  // Cast to signed byte
-                if ((status & FLAG_NEGATIVE) == 0) {
-                    PC += offset;
-                }
+                branch((status & FLAG_NEGATIVE) == 0);
                 break;
             case 0x30: // BMI (branch if minus/negative flag set)
-                offset = (byte) memory.read(PC++);  // Cast to signed byte
-                if ((status & FLAG_NEGATIVE) != 0) {
-                    PC += offset;
-                }
+                branch((status & FLAG_NEGATIVE) != 0);
                 break;
             case 0x90: // BCC (branch if carry flag clear)
-                offset = (byte) memory.read(PC++);
-                if ((status & FLAG_CARRY) == 0) {
-                    PC += offset;
-                }
+                branch((status & FLAG_CARRY) == 0);
                 break;
             case 0xB0: // BCS (branch if carry flag set)
-                offset = (byte) memory.read(PC++);
-                if ((status & FLAG_CARRY) != 0) {
-                    PC += offset;
-                }
+                branch((status & FLAG_CARRY) != 0);
                 break;
             case 0x50: // BVC (branch if overflow flag clear)
-                offset = (byte) memory.read(PC++);
-                if ((status & FLAG_OVERFLOW) == 0) {
-                    PC += offset;
-                }
+                branch((status & FLAG_OVERFLOW) == 0);
                 break;
             case 0x70: // BVS (branch if overflow flag set)
-                offset = (byte) memory.read(PC++);
-                if ((status & FLAG_OVERFLOW) != 0) {
-                    PC += offset;
-                }
+                branch((status & FLAG_OVERFLOW) != 0);
                 break;
 
             // Increment / Decrement
@@ -1027,6 +1018,9 @@ public class CPU6502 {
         int high = memory.read(PC++);
         int base = (high << 8) | low;
         int addr = (base + X) & 0xFFFF;
+        if ((addr & 0xFF00) != (base & 0xFF00)) {
+            addCycle();
+        }
         return memory.read(addr);
     }
 
@@ -1035,6 +1029,9 @@ public class CPU6502 {
         int high = memory.read(PC++);
         int base = (high << 8) | low;
         int addr = (base + Y) & 0xFFFF;
+        if ((addr & 0xFF00) != (base & 0xFF00)) {
+            addCycle();
+        }
         return memory.read(addr);
     }
 
@@ -1051,6 +1048,9 @@ public class CPU6502 {
         int high = memory.read((zpAddr + 1) & 0xFF);
         int base = (high << 8) | low;
         int addr = (base + Y) & 0xFFFF;
+        if ((addr & 0xFF00) != (base & 0xFF00)) {
+            addCycle();
+        }
         return memory.read(addr);
     }
 
@@ -1080,6 +1080,13 @@ public class CPU6502 {
         int high = memory.read(PC++);
         int base = (high << 8) | low;
         return (base + X) & 0xFFFF;
+    }
+
+    private int readAbsoluteYAddr() {
+        int low = memory.read(PC++);
+        int high = memory.read(PC++);
+        int base = (high << 8) | low;
+        return (base + Y) & 0xFFFF;
     }
 
     private int readIndexedIndirect() {
@@ -1277,4 +1284,16 @@ public class CPU6502 {
     }
 
     public boolean isRunning() { return running; }
+
+    private void branch(boolean condition) {
+        int offset = (byte) memory.read(PC++);
+        if (condition) {
+            addCycle();
+            int newPC = (PC + offset) & 0xFFFF;
+            if ((newPC & 0xFF00) != (PC & 0xFF00)) {
+                addCycle();
+            }
+            PC = newPC;
+        }
+    }
 }

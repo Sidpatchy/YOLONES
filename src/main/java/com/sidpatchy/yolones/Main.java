@@ -48,48 +48,53 @@ public class Main {
         // 7. Run the emulation loop
         final double TARGET_FPS = 60.098;
         final long NS_PER_FRAME = (long) (1_000_000_000 / TARGET_FPS);
+        final int CYCLES_PER_FRAME = 29780; // Roughly 262 * 341 / 3
         long lastFrameTime = System.nanoTime();
 
         while (cpu.isRunning()) {
-            // Update input state
-            controllerHandler.update();
-            cpu.step();
+            int cyclesThisFrame = 0;
+            while (cyclesThisFrame < CYCLES_PER_FRAME) {
+                // Update input state (maybe not every instruction, but every frame is too slow)
+                // For now, let's keep it here or move it to a specific point.
+                if (cyclesThisFrame % 100 == 0) {
+                    controllerHandler.update();
+                }
 
-            for (int i = 0; i < 3; i++) {
-                if (ppu.tick()) {
-                    logger.debug("NMI triggered");
-                    cpu.triggerNMI();
+                int cycles = cpu.step();
+                cyclesThisFrame += cycles;
+
+                for (int i = 0; i < cycles * 3; i++) {
+                    if (ppu.tick()) {
+                        cpu.triggerNMI();
+                    }
+                }
+
+                if (cart.getMapper().hasIRQ()) {
+                    cpu.triggerIRQ();
                 }
             }
 
-            if (cart.getMapper().hasIRQ()) {
-                cpu.triggerIRQ();
-            }
+            // Frame is "complete" (reached cycle target)
+            renderer.updateFrame(ppu.getFramebuffer());
 
-            if (ppu.getScanline() == 0 && ppu.getCycle() == 0) {
-                logger.info("Frame complete, updating display");
-                renderer.updateFrame(ppu.getFramebuffer());
+            // Sync to frame rate
+            long currentTime = System.nanoTime();
+            long elapsedTime = currentTime - lastFrameTime;
+            long sleepTimeNs = NS_PER_FRAME - elapsedTime;
 
-                // Sync to frame rate
-                long currentTime = System.nanoTime();
-                long elapsedTime = currentTime - lastFrameTime;
-                long sleepTimeNs = NS_PER_FRAME - elapsedTime;
-
-                if (sleepTimeNs > 0) {
-                    // Sleep for the millisecond part
-                    long millis = sleepTimeNs / 1_000_000;
-                    int nanos = (int) (sleepTimeNs % 1_000_000);
-                    if (millis > 0) {
-                        Thread.sleep(millis);
-                    }
-                    // Busy-wait for the remaining nanoseconds for higher precision
-                    long wakeTime = lastFrameTime + NS_PER_FRAME;
-                    while (System.nanoTime() < wakeTime) {
-                        // Busy wait
-                    }
+            if (sleepTimeNs > 0) {
+                // Sleep for the millisecond part
+                long millis = sleepTimeNs / 1_000_000;
+                if (millis > 0) {
+                    Thread.sleep(millis);
                 }
-                lastFrameTime = System.nanoTime();
+                // Busy-wait for the remaining nanoseconds for higher precision
+                long wakeTime = lastFrameTime + NS_PER_FRAME;
+                while (System.nanoTime() < wakeTime) {
+                    // Busy wait
+                }
             }
+            lastFrameTime = System.nanoTime();
         }
     }
 }
