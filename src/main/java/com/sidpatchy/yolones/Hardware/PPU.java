@@ -21,6 +21,7 @@ public class PPU {
 
     // OAM (Object Attribute Memory) for sprites
     private int[] oam = new int[256];
+    private int[] bgPixels = new int[256]; // 0: transparent, 1: opaque
 
     // Internal state
     private boolean addrLatch = false;  // Toggle for 0x2005/0x2006
@@ -161,7 +162,7 @@ public class PPU {
             if (scanline >= 262) {
                 // End of frame
                 scanline = 0;
-                ppuStatus &= 0x7F;  // Clear VBlank flag
+                ppuStatus &= 0x3F;  // Clear VBlank and Sprite 0 hit flags
                 // After rendering, reset OAMADDR to 0 as many games expect
                 oamAddr = 0;
             }
@@ -173,8 +174,9 @@ public class PPU {
     private void renderScanline(int y) {
         // Clear background with universal background color first if rendering is enabled
         int universalColor = NES_PALETTE[memory.read(0x3F00) & 0x3F];
-        if ((ppuMask & 0x18) != 0) {
-            for (int x = 0; x < 256; x++) framebuffer[y * 256 + x] = universalColor;
+        for (int x = 0; x < 256; x++) {
+            framebuffer[y * 256 + x] = universalColor;
+            bgPixels[x] = 0;
         }
 
         if ((ppuMask & 0x18) == 0) return; // Rendering disabled
@@ -184,7 +186,6 @@ public class PPU {
         boolean sprites8x16 = (ppuCtrl & 0x20) != 0;
 
         // Simplified background rendering for the scanline
-        // This still doesn't handle horizontal scroll perfectly but it's better than full frame
         if ((ppuMask & 0x08) != 0) {
             for (int x = 0; x < 256; x++) {
                 int realX = x + scrollX;
@@ -207,7 +208,7 @@ public class PPU {
                 int attrAddr = nametableBase + 0x3C0 + (tileY / 4) * 8 + (tileX / 4);
                 int attrByte = memory.read(attrAddr);
                 int quadrant = ((tileY & 0x02) << 1) | (tileX & 0x02);
-                int shift = (quadrant == 0 ? 0 : quadrant == 2 ? 2 : quadrant == 4 ? 4 : 6);
+                int shift = quadrant * 2;
                 int paletteIndex = (attrByte >> shift) & 0x03;
 
                 int tileAddr = bgPatternBase + tileIndex * 16;
@@ -222,9 +223,7 @@ public class PPU {
                 if (colorIndex != 0) {
                     int paletteAddr = 0x3F00 + paletteIndex * 4 + colorIndex;
                     framebuffer[y * 256 + x] = NES_PALETTE[memory.read(paletteAddr) & 0x3F];
-                } else {
-                    int universalColorAddr = 0x3F00;
-                    framebuffer[y * 256 + x] = NES_PALETTE[memory.read(universalColorAddr) & 0x3F];
+                    bgPixels[x] = 1;
                 }
             }
         }
@@ -241,6 +240,7 @@ public class PPU {
                 int palette = attr & 0x03;
                 boolean flipH = (attr & 0x40) != 0;
                 boolean flipV = (attr & 0x80) != 0;
+                boolean priority = (attr & 0x20) != 0; // 0: in front, 1: behind
 
                 int row = y - spriteY;
                 if (flipV) row = (sprites8x16 ? 15 : 7) - row;
@@ -267,8 +267,15 @@ public class PPU {
                     int colorIndex = (bit1 << 1) | bit0;
 
                     if (colorIndex != 0) {
-                        int paletteAddr = 0x3F10 + palette * 4 + colorIndex;
-                        framebuffer[y * 256 + x] = NES_PALETTE[memory.read(paletteAddr) & 0x3F];
+                        // Sprite 0 hit detection
+                        if (i == 0 && bgPixels[x] != 0 && x < 255) {
+                            ppuStatus |= 0x40;
+                        }
+
+                        if (!priority || bgPixels[x] == 0) {
+                            int paletteAddr = 0x3F10 + palette * 4 + colorIndex;
+                            framebuffer[y * 256 + x] = NES_PALETTE[memory.read(paletteAddr) & 0x3F];
+                        }
                     }
                 }
             }
