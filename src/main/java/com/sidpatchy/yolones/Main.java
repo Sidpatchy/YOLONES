@@ -7,6 +7,7 @@ import com.sidpatchy.yolones.Hardware.APU;
 import com.sidpatchy.yolones.Hardware.PPU;
 import com.sidpatchy.yolones.Hardware.PPUMemory;
 import com.sidpatchy.yolones.input.ControllerHandler;
+import com.sidpatchy.yolones.input.GamepadController;
 import com.sidpatchy.yolones.input.KeyboardController;
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
@@ -17,9 +18,10 @@ public class Main {
     private static final Logger logger = LogManager.getLogger(Main.class);
     public static void main(String[] args) throws IOException, InterruptedException {
         // 1. Load the ROM, various roms listed for testing purposes.
-        Cartridge cart = new Cartridge("/var/home/osprey/Downloads/nestest.nes");
+        //Cartridge cart = new Cartridge("/var/home/osprey/Downloads/nestest.nes");
         //Cartridge cart = new Cartridge("/var/home/osprey/Games/ROMs/NES Games/AccuracyCoin.nes");
-        //Cartridge cart = new Cartridge("/var/home/osprey/Games/ROMs/NES Games/Super Mario Bros. (World).nes");
+        //Cartridge cart = new Cartridge("/var/home/osprey/Games/ROMs/NES Games/Super Mario Bros. 3 (USA).nes");
+        Cartridge cart = new Cartridge("/var/home/osprey/Downloads/Super Mario Bros. (Japan, USA).nes");
 
         // 2. Create PPU memory and PPU
         PPUMemory ppuMemory = new PPUMemory(cart.getMapper(), cart.isMirrorVertical());
@@ -38,10 +40,15 @@ public class Main {
         AudioPlayer audioPlayer = new AudioPlayer();
 
         // Input setup via ControllerHandler
-        // Keyboard input: WASD (D-pad), Z (B), X (A), Enter (Start), Shift (Select)
+        // Priority: Gamepad -> Keyboard
         ControllerHandler controllerHandler = new ControllerHandler(memory);
-        KeyboardController keyboard = new KeyboardController();
-        controllerHandler.setController(keyboard, renderer, frame);
+        GamepadController gamepad = new GamepadController();
+        if (gamepad.isConnected()) {
+            controllerHandler.setController(gamepad, renderer, frame);
+        } else {
+            KeyboardController keyboard = new KeyboardController();
+            controllerHandler.setController(keyboard, renderer, frame);
+        }
         renderer.setFocusable(true);
         renderer.requestFocusInWindow();
 
